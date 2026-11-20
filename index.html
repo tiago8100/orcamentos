@@ -167,6 +167,9 @@
   #ptr{position:fixed;top:64px;left:50%;z-index:6;width:36px;height:36px;border-radius:50%;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--accent);transform:translateX(-50%)}
   #ptr.spin{animation:ptrsp .8s linear infinite}
   @keyframes ptrsp{from{transform:translateX(-50%) translateY(60px) rotate(0)}to{transform:translateX(-50%) translateY(60px) rotate(360deg)}}
+  .install-box{background:var(--info-bg);border:1px solid var(--accent);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+  .install-box b{display:block;margin-bottom:4px}
+  .install-box .row{margin-top:8px}
   [hidden]{display:none!important}
   #toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + 80px + var(--safe));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:30;max-width:90%;text-align:center}
   #toast.show{opacity:1}
@@ -195,11 +198,13 @@
       <input id="q" type="search" placeholder="🔎 Matrícula, oficina, mecânico, peça…" autocomplete="off" style="margin:0;flex:2">
       <select id="ownFilt" style="flex:1;min-width:0"></select>
     </div>
+    <div class="install-box" hidden></div>
     <div class="chips" id="chips"></div>
     <div id="listBox"></div>
   </section>
   <section id="vLogin" hidden>
-    <div class="card" style="max-width:420px;margin:30px auto">
+    <div class="install-box" style="max-width:420px;margin:20px auto 0" hidden></div>
+    <div class="card" style="max-width:420px;margin:16px auto 30px">
       <h2>Entrar</h2>
       <form id="loginForm">
         <label class="fld"><span>Email</span><input id="lgEmail" type="email" autocomplete="username" required></label>
@@ -345,7 +350,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.3';
+const APP_VERSION='3.3.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -780,10 +785,10 @@ function accessMessage(nome, email, pw){
 📧 Email: ${email}
 🔑 Password ${pw?'inicial':''}: ${pw||'(pede-a ao administrador)'}
 
-Como instalar no telemóvel (Android):
-1. Abre o link no Chrome.
-2. Menu ⋮ → "Instalar app" (ou "Adicionar ao ecrã principal").
-3. Abre a app e entra com o email e a password.
+Como instalar no telemóvel:
+1. Abre o link no Chrome (se abrir dentro do WhatsApp, toca em ⋮ → "Abrir no Chrome").
+2. Carrega no botão azul "📲 Instalar a app" (ou menu ⋮ → "Instalar app").
+3. Abre a app pelo ícone e entra com o email e a password.
 4. Em ⚙️ Definições → Conta, muda a password.`.replace(/Password\s+:/,'Password:');
 }
 function openLink(href, newTab){ const a=h('a',{href, target:newTab?'_blank':null, rel:'noopener'}); document.body.append(a); a.click(); a.remove(); }
@@ -827,6 +832,30 @@ async function refreshAll(){
     ind.hidden=true; dy=0; });
 })();
 
+/* ---------- instalar a app no telemóvel ---------- */
+let installEvt=null;
+const isStandalone=()=>matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
+const UA=navigator.userAgent;
+const isIOS=/iPhone|iPad|iPod/i.test(UA);
+const inAppBrowser=/(FBAN|FBAV|Instagram|WhatsApp|Line\/|; wv\))/i.test(UA);
+addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); installEvt=e; renderInstall(); });
+addEventListener('appinstalled',()=>{ installEvt=null; try{ localStorage.setItem('instalada','1'); }catch{} renderInstall(); toast('App instalada. Já a podes abrir pelo ícone no ecrã principal.'); });
+function renderInstall(){
+  const dismissed=(()=>{ try{ return localStorage.getItem('installOculto')==='1'; }catch{ return false; } })();
+  document.querySelectorAll('.install-box').forEach(box=>{
+    const onList=!!box.closest('#vList');
+    if (isStandalone() || (onList && dismissed)){ box.hidden=true; return; }
+    let content;
+    if (installEvt) content=[h('b',{},'📲 Instala a app no telemóvel'), h('span',{class:'small'},'Fica com ícone no ecrã principal e abre como uma app normal.'),
+      h('div',{class:'row'}, h('button',{class:'primary',onclick:async()=>{ installEvt.prompt(); const r=await installEvt.userChoice.catch(()=>({})); if (r.outcome==='accepted') installEvt=null; renderInstall(); }},'📲 Instalar a app'))];
+    else if (inAppBrowser) content=[h('b',{},'Abre este link no Chrome para instalar a app'), h('span',{class:'small'},'Estás no browser do WhatsApp (ou de outra app). Toca no menu ⋮ (ou ⋯) e escolhe "Abrir no Chrome" / "Abrir no browser". Depois aparece o botão para instalar.')];
+    else if (isIOS) content=[h('b',{},'📲 Instalar no iPhone'), h('span',{class:'small'},'No Safari, toca em Partilhar (□↑) e escolhe "Adicionar ao ecrã principal".')];
+    else content=[h('b',{},'📲 Instalar a app'), h('span',{class:'small'},'No menu ⋮ do Chrome, escolhe "Instalar app" ou "Adicionar ao ecrã principal".')];
+    if (onList) content.push(h('div',{style:'text-align:right'}, h('button',{class:'linkbtn',onclick:()=>{ try{ localStorage.setItem('installOculto','1'); }catch{} renderInstall(); }},'Não mostrar mais')));
+    box.replaceChildren(...content); box.hidden=false;
+  });
+}
+
 /* ---------- navegação ---------- */
 const TABS=['vList','vStats','vSettings'];
 let view='vList', cur=null, curCar=null, statsLvl={y:null,m:null};
@@ -868,7 +897,7 @@ async function route(st){
     if (!cur || cur.id!==st.id){ const d=await dbGet(st.id); if (!d) return go({v:'vList'},true); cur=migrate(d); }
     renderEdit();
   } else cur=null;
-  if (v==='vList') await renderList();
+  if (v==='vList'){ await renderList(); renderInstall(); }
   if (v==='vStats'){ statsLvl={y:st.y||null, m:st.m||null}; await renderStats(); }
   if (v==='vCar'){ curCar=st.plate; await renderCar(); }
   if (v==='vSettings') fillSettings();
@@ -2126,7 +2155,7 @@ $('#appVer').textContent=APP_VERSION;
 function showLogin(){
   me=null; docsCache=null; cur=null; selecting=false; hideLock(); $('#testBar').hidden=true;
   history.replaceState({v:'vLogin'},'','#entrar');
-  show('vLogin'); $('#nav').hidden=true; $('#fab').hidden=true;
+  show('vLogin'); $('#nav').hidden=true; $('#fab').hidden=true; renderInstall();
 }
 async function boot(session){
   busy(true,'A carregar…');
