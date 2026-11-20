@@ -48,8 +48,20 @@
   .chip.st-validado{background:var(--ok-bg);color:var(--ok);border-color:transparent}
   .chip.st-rever{background:var(--warn-bg);color:var(--warn);border-color:transparent}
   .chip.st-naolido{background:var(--err-bg);color:var(--err);border-color:transparent}
-  .chip.es-pago{background:var(--ok-bg);color:var(--ok);border-color:transparent}
-  .chip.es-aprovado{background:var(--info-bg);border-color:transparent}
+  .chip.st-validado{background:var(--info-bg);color:var(--ink)}
+  .chip.st-aprovado{background:#efe7fb;color:#5b2d91;border-color:transparent}
+  .chip.st-pago{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+  @media (prefers-color-scheme: dark){ .chip.st-aprovado{background:#2e2340;color:#cdb4f2} }
+  .steps{display:flex;margin-bottom:12px}
+  .step{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;color:var(--muted);position:relative}
+  .step .dot{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--card);z-index:1}
+  .step:not(:first-child)::before{content:'';position:absolute;top:13px;right:50%;width:100%;height:2px;background:var(--line)}
+  .step.done .dot{background:var(--ok);border-color:var(--ok);color:#fff}
+  .step.done::before,.step.now::before{background:var(--ok)}
+  .step.now .dot{border-color:var(--accent);color:var(--accent)}
+  .step.now{color:var(--ink);font-weight:600}
+  .linkbtn{border:0;background:transparent;color:var(--muted);font-size:13px;padding:4px 0;text-decoration:underline}
+  #vEdit input:disabled,#vEdit textarea:disabled{opacity:1;color:var(--ink);-webkit-text-fill-color:var(--ink);background:transparent;border-color:transparent;padding-left:2px}
   .mhead{display:flex;justify-content:space-between;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;margin:16px 4px 8px}
   .mhead:first-child{margin-top:0}
   ul.list{list-style:none;margin:0;padding:0}
@@ -239,7 +251,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='2.1';
+const APP_VERSION='2.2';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -491,8 +503,18 @@ function calc(d){
 
 /* ---------- estado do orçamento ---------- */
 const docDate=d=> /^\d{4}-\d{2}-\d{2}$/.test(d.data||'') ? d.data : new Date(d.criado).toISOString().slice(0,10);
-function status(d){ if (d.erro && !d.pecas.length && !d.matricula) return 'naolido'; return d.validado ? 'validado' : 'rever'; }
-const STATUS={naolido:'🔴 Não lido', rever:'🟡 Por rever', validado:'🟢 Validado'};
+/* fluxo: A validar → Validado → Aprovado → Pago (só avança; "Reabrir" volta um passo, com confirmação) */
+function status(d){
+  if (d.estado==='pago') return 'pago';
+  if (d.estado==='aprovado') return 'aprovado';
+  if (d.validado) return 'validado';
+  if (d.erro && !d.pecas.length && !d.matricula) return 'naolido';
+  return 'rever';
+}
+const STAGES=['rever','validado','aprovado','pago'];
+const STATUS={naolido:'🔴 Não lido', rever:'🟡 A validar', validado:'🔵 Validado', aprovado:'🟣 Aprovado', pago:'🟢 Pago'};
+const STATUS_TXT={naolido:'Não lido', rever:'A validar', validado:'Validado', aprovado:'Aprovado', pago:'Pago'};
+const isLocked=d=>['validado','aprovado','pago'].includes(status(d));
 const ESTADOS={orcamento:'Orçamento', aprovado:'Aprovado', pago:'Pago'};
 const chip=(text,cls)=>h('span',{class:'chip '+(cls||'')},text);
 function agg(docs){
@@ -522,7 +544,7 @@ function show(v){
   $('#btnBack').hidden = top && !(v==='vStats' && statsLvl.y);
   $('#btnSelect').hidden = !(v==='vList' && !selecting);
   $('#btnCancelSel').hidden = !(v==='vList' && selecting);
-  $('#btnDel').hidden = !((v==='vList' && selecting) || v==='vEdit');
+  $('#btnDel').hidden = !((v==='vList' && selecting) || (v==='vEdit' && cur && status(cur)!=='pago'));
   $('#title').textContent = v==='vList' ? (selecting ? `${selected.size} selecionado(s)` : 'Orçamentos')
     : v==='vStats' ? 'Resumos' : v==='vSettings' ? 'Definições' : v==='vCar' ? '🚗 '+curCar : ((cur&&cur.matricula)||'Orçamento');
   if (v!=='vEdit') $('#saved').textContent='';
@@ -560,7 +582,7 @@ function openDoc(d){ cur=migrate(d); return go({v:'vEdit', id:d.id}); }
 
 /* ---------- lista ---------- */
 let q='', filt='todos';
-const FILTS=[['todos','Todos'],['rever','A rever'],['validado','Validados'],['porpagar','Por pagar'],['pago','Pagos']];
+const FILTS=[['todos','Todos'],['rever','A validar'],['validado','Validados'],['aprovado','Aprovados'],['pago','Pagos']];
 function matchQ(d){
   if (!q) return true;
   const hay=[d.matricula,d.marca,d.modelo,d.oficina,d.assinatura,d.cliente,...d.pecas.map(p=>p.descricao)].filter(Boolean).join(' ').toLowerCase();
@@ -569,11 +591,9 @@ function matchQ(d){
 }
 function matchF(d){
   switch(filt){
-    case 'rever': return status(d)!=='validado';
-    case 'validado': return status(d)==='validado';
-    case 'porpagar': return d.estado!=='pago';
-    case 'pago': return d.estado==='pago';
-    default: return true;
+    case 'todos': return true;
+    case 'rever': return ['rever','naolido'].includes(status(d));
+    default: return status(d)===filt;
   }
 }
 async function renderList(){
@@ -596,7 +616,7 @@ async function renderList(){
         h('div',{class:'main'},
           h('div',{class:'t'},[d.matricula,[d.marca,d.modelo].filter(Boolean).join(' ')].filter(Boolean).join(' · ')||'Sem matrícula'),
           h('div',{class:'s'},[fmtDate(docDate(d)),d.oficina].filter(Boolean).join(' · ')),
-          h('div',{class:'chips'}, chip(STATUS[st],'st-'+st), d.estado!=='orcamento'?chip(ESTADOS[d.estado],'es-'+d.estado):null, d.manual?chip('✍️ Manual'):null)),
+          h('div',{class:'chips'}, chip(STATUS[st],'st-'+st), d.manual?chip('✍️ Manual'):null)),
         h('div',{class:'v'},money(calc(d).total)));
       attachPress(li,d);
       ul.append(li);
@@ -622,9 +642,12 @@ $('#btnCancelSel').onclick=exitSelect;
 $('#btnDel').onclick=async()=>{
   if (view==='vEdit') return delCur();
   if (!selected.size) return toast('Toca nos orçamentos que queres apagar.');
-  if (!confirm(`Apagar ${selected.size} orçamento(s)? Não dá para desfazer.`)) return;
-  const n=selected.size; for (const id of selected) await dbDel(id);
-  toast(`${n} orçamento(s) apagado(s).`); exitSelect();
+  const docs=(await allDocs()).filter(d=>selected.has(d.id));
+  const pagos=docs.filter(d=>status(d)==='pago'), del=docs.filter(d=>status(d)!=='pago');
+  if (!del.length) return toast('Orçamentos pagos estão finalizados e não podem ser apagados.');
+  if (!confirm(`Apagar ${del.length} orçamento(s)? Não dá para desfazer.`+(pagos.length?`\n\n${pagos.length} pago(s) ficam, porque estão finalizados.`:''))) return;
+  for (const d of del) await dbDel(d.id);
+  toast(`${del.length} orçamento(s) apagado(s).`); exitSelect();
 };
 $('#q').addEventListener('input',e=>{ q=e.target.value.trim(); renderList(); });
 
@@ -687,6 +710,7 @@ function renderEdit(){
   if (cur.notas_leitura) v.append(h('div',{class:'alert info'}, '🔎 '+cur.notas_leitura));
   if (cur.viaturaDaMemoria) v.append(h('div',{class:'alert info'}, '🚗 Marca e modelo preenchidos a partir de leituras anteriores desta matrícula.'));
   if (cur.matricula && !plateOk(cur.matricula)) v.append(h('div',{class:'alert warn'}, `⚠️ A matrícula "${cur.matricula}" não tem um formato português válido (ex.: 85-40-UQ). Confirma-a.`));
+  if (isLocked(cur)) v.append(h('div',{class:'alert info'}, status(cur)==='pago' ? '🔒 Orçamento pago e finalizado — só de leitura.' : '🔒 Valores bloqueados. Para alterar, usa ↩︎ Reabrir.'));
 
   const recalcMO=()=>{ const a=parseNum(cur.mo_horas), b=parseNum(cur.mo_preco_hora); if (a!=null&&b!=null){ cur.mo_total=r2(a*b); $('#moTotal').value=plain(cur.mo_total); } };
   const ivaChk=h('input',{type:'checkbox',checked:cur.iva_incluido,onchange:e=>{ cur.iva_incluido=e.target.checked; changed(); }});
@@ -695,7 +719,7 @@ function renderEdit(){
     h('div',{class:'card',id:'valCard'}),
     card('Resumo', h('div',{id:'avisos'}), h('div',{class:'sum',id:'sum'})),
     card('Fotos', h('div',{class:'thumbs',id:'thumbs'}),
-      h('div',{class:'row',style:'margin-top:10px'},
+      h('div',{class:'row edit-only',style:'margin-top:10px'},
         h('label',{class:'btn'},'📷 Tirar foto', h('input',{type:'file',accept:'image/*',capture:'environment',hidden:true,onchange:addPhotoInput})),
         h('label',{class:'btn'},'🖼️ Galeria', h('input',{type:'file',accept:'image/*',hidden:true,onchange:addPhotoInput}))),
       cur.diag ? h('p',{class:'muted small',style:'margin:8px 0 0'},
@@ -708,7 +732,7 @@ function renderEdit(){
     card('Peças',
       h('div',{class:'pt-row pt-head'}, h('span',{},'Qtd'), h('span',{},'Peça'), h('span',{},'Valor €'), h('span',{},'Excl.'), h('span')),
       h('div',{id:'pecas'}),
-      h('button',{style:'margin-top:10px;width:100%',onclick:()=>{ cur.pecas.push({descricao:'',quantidade:1,valor:null,riscado:false}); renderPecas(); changed();
+      h('button',{class:'edit-only',style:'margin-top:10px;width:100%',onclick:()=>{ cur.pecas.push({descricao:'',quantidade:1,valor:null,riscado:false}); renderPecas(); changed();
         const ins=document.querySelectorAll('#pecas .pt-row'); ins[ins.length-1]?.querySelectorAll('input')[1]?.focus(); }},'＋ Adicionar peça')),
     card('Mão de obra',
       h('div',{class:'grid2'}, field('Horas','mo_horas',{num:true,after:recalcMO}), field('Preço/hora (€)','mo_preco_hora',{num:true,after:recalcMO})),
@@ -720,31 +744,61 @@ function renderEdit(){
       field('Nome','oficina'), field('NIPC','nipc',{im:'numeric'}), field('Morada','morada'), field('Observações','observacoes',{area:true})),
     h('div',{class:'row'},
       h('button',{onclick:()=>exportXlsx([cur], `orcamento-${slug(cur.matricula)||'sem-matricula'}-${docDate(cur)}.xlsx`)},'📊 Exportar Excel'),
-      h('button',{class:'danger',onclick:delCur},'🗑️ Apagar'))
+      h('button',{class:'danger del-only',onclick:delCur},'🗑️ Apagar'))
   );
-  renderVal(); renderThumbs(); renderPecas(); renderSummary(); renderDupes();
+  renderVal(); renderThumbs(); renderPecas(); renderSummary(); renderDupes(); applyLock();
+}
+function applyLock(){
+  const locked=isLocked(cur);
+  document.querySelectorAll('#vEdit .card:not(#valCard) input, #vEdit .card:not(#valCard) textarea').forEach(e=>e.disabled=locked);
+  document.querySelectorAll('#vEdit .edit-only').forEach(e=>e.hidden=locked);
+  document.querySelectorAll('#vEdit .del-only').forEach(e=>e.hidden=status(cur)==='pago');
+  $('#dupBox').hidden=locked;
 }
 
 function renderVal(){
   const b=$('#valCard'); if (!b) return; b.replaceChildren();
-  if (cur.validado) b.append(h('div',{class:'valrow ok'},
-    h('span',{},'🟢 Validado'+(cur.validadoEm?' em '+new Date(cur.validadoEm).toLocaleDateString('pt-PT'):'')),
-    h('button',{onclick:()=>{ cur.validado=false; cur.validadoEm=null; renderVal(); changed(); }},'Desfazer')));
-  else b.append(h('div',{class:'valrow'},
-    h('span',{},'🟡 Revê os valores e confirma'),
-    h('button',{class:'primary',onclick:validar},'✓ Validar')));
-  b.append(h('div',{style:'margin-top:12px'}, h('span',{class:'muted small'},'Estado'),
-    h('div',{class:'seg'}, ...Object.entries(ESTADOS).map(([k,l])=>h('button',{class:cur.estado===k?'on':null,onclick:()=>{
-      cur.estado=k; if (k==='pago' && !cur.pagoEm) cur.pagoEm=todayISO(); renderVal(); changed(); }},l)))));
-  if (cur.estado==='pago'){
-    const inp=h('input',{type:'date'}); inp.value=cur.pagoEm||''; inp.oninput=()=>{ cur.pagoEm=inp.value||null; changed(); };
-    b.append(h('label',{class:'fld',style:'margin:10px 0 0'}, h('span',{},'Pago em'), inp));
+  const st=status(cur), i=Math.max(0,STAGES.indexOf(st));
+  const dt=ts=>ts?new Date(ts).toLocaleDateString('pt-PT'):'';
+  b.append(h('div',{class:'steps'}, ...['A validar','Validado','Aprovado','Pago'].map((l,k)=>
+    h('div',{class:'step'+(k<i||(k===3&&i===3)?' done':k===i?' now':'')}, h('span',{class:'dot'},k<i||(k===3&&i===3)?'✓':String(k+1)), h('span',{},l)))));
+  if (i===0) b.append(h('div',{class:'valrow'}, h('span',{},'Revê os valores e confirma.'), h('button',{class:'primary',onclick:validar},'✓ Validar')));
+  if (i===1) b.append(h('div',{class:'valrow'}, h('span',{class:'small muted'},`Validado em ${dt(cur.validadoEm)}.`), h('button',{class:'primary',onclick:aprovar},'👍 Aprovar')));
+  if (i===2){
+    const inp=h('input',{type:'date'}); inp.value=todayISO();
+    b.append(h('div',{class:'small muted',style:'margin-bottom:8px'}, `Aprovado em ${dt(cur.aprovadoEm)||'—'}.`),
+      h('div',{class:'valrow',style:'align-items:flex-end'}, h('label',{class:'fld',style:'margin:0;flex:1'}, h('span',{},'Data do pagamento'), inp),
+        h('button',{class:'primary',onclick:()=>pagar(inp.value)},'💶 Pago')));
   }
+  if (i===3) b.append(h('div',{class:'valrow ok'}, h('span',{},`🔒 Pago em ${fmtDate(cur.pagoEm)||'—'} — finalizado`)));
+  if (i>0) b.append(h('div',{style:'text-align:right;margin-top:6px'}, h('button',{class:'linkbtn',onclick:reabrir},'↩︎ Reabrir')));
 }
+function afterStage(msg){ changed(); renderEdit(); show('vEdit'); toast(msg); }
 function validar(){
   const c=calc(cur);
   if (c.avisos.length && !confirm('Os totais não batem com a folha:\n\n'+c.avisos.join('\n')+'\n\nValidar mesmo assim?')) return;
-  cur.validado=true; cur.validadoEm=Date.now(); renderVal(); changed(); toast('Orçamento validado.');
+  cur.validado=true; cur.validadoEm=Date.now(); afterStage('Orçamento validado.');
+}
+function aprovar(){
+  if (!confirm('Aprovar este orçamento?')) return;
+  cur.estado='aprovado'; cur.aprovadoEm=Date.now(); afterStage('Orçamento aprovado.');
+}
+function pagar(date){
+  if (!date) return toast('Escolhe a data do pagamento.');
+  if (!confirm(`Marcar como pago em ${fmtDate(date)}?\n\nO orçamento fica finalizado e deixa de poder ser alterado ou apagado.`)) return;
+  cur.estado='pago'; cur.pagoEm=date; afterStage('Orçamento pago e finalizado.');
+}
+function reabrir(){
+  const st=status(cur);
+  const msg = st==='pago' ? '⚠️ Este orçamento já está PAGO e finalizado.\n\nReabrir volta-o a "Aprovado" e apaga a data de pagamento. Tens a certeza?'
+    : st==='aprovado' ? 'Reabrir volta o orçamento a "Validado" (deixa de estar aprovado). Continuar?'
+    : 'Reabrir volta o orçamento a "A validar" e desbloqueia os valores para edição. Continuar?';
+  if (!confirm(msg)) return;
+  if (st==='pago'){ cur.estado='aprovado'; cur.pagoEm=null; }
+  else if (st==='aprovado'){ cur.estado='orcamento'; cur.aprovadoEm=null; cur.validado=true; }
+  else { cur.validado=false; cur.validadoEm=null; }
+  cur.reaberto=(cur.reaberto||0)+1;
+  afterStage('Orçamento reaberto.');
 }
 
 const thumbURLs=[];
@@ -779,7 +833,7 @@ function renderPecas(){
     const desc=h('input',{placeholder:'Descrição','aria-label':'Descrição'}); desc.value=p.descricao||''; desc.oninput=()=>{ p.descricao=desc.value; changed(); };
     const rk=h('input',{type:'checkbox',checked:p.riscado,'aria-label':'Excluir'}); rk.onchange=()=>{ p.riscado=rk.checked; row.classList.toggle('risc',p.riscado); changed(); };
     row.append(num('quantidade','1'), desc, num('valor','0,00'), h('label',{class:'rk'},rk),
-      h('button',{class:'x','aria-label':'Remover peça',onclick:()=>{ cur.pecas.splice(i,1); renderPecas(); changed(); }},'✕'));
+      h('button',{class:'x edit-only','aria-label':'Remover peça',onclick:()=>{ cur.pecas.splice(i,1); renderPecas(); changed(); }},'✕'));
     box.append(row);
   });
 }
@@ -802,7 +856,7 @@ function renderSummary(){
   const bar=$('#editBar');
   bar.replaceChildren(
     h('div',{}, h('div',{class:'small muted'},'Total c/ IVA'),
-      h('div',{class:'small'}, c.avisos.length ? '⚠️ não bate com a folha' : (cur.validado ? '🟢 validado' : '🟡 por validar'))),
+      h('div',{class:'small'}, c.avisos.length ? '⚠️ não bate com a folha' : STATUS[status(cur)])),
     h('div',{class:'big'}, money(c.total)));
   bar.onclick=()=>$('#sum')?.scrollIntoView({behavior:'smooth',block:'center'});
 }
@@ -821,6 +875,7 @@ async function renderDupes(){
 }
 
 async function delCur(){
+  if (status(cur)==='pago') return toast('Orçamento pago está finalizado e não pode ser apagado. Reabre-o primeiro.');
   if (!confirm('Apagar este orçamento? Não dá para desfazer.')) return;
   clearTimeout(saveT); saveT=null;
   await dbDel(cur.id); cur=null; toast('Orçamento apagado.');
@@ -834,6 +889,7 @@ function openViewer(i){
   vIdx=i; if (vURL) URL.revokeObjectURL(vURL);
   vURL=URL.createObjectURL(cur.fotos[i]); $('#vImg').src=vURL;
   vt={s:1,x:0,y:0}; applyVT(); $('#viewer').hidden=false;
+  for (const b of ['#vRead','#vCrop','#vDel']) $(b).hidden=isLocked(cur);
 }
 function closeViewer(){ $('#viewer').hidden=true; }
 (function(){
@@ -937,7 +993,7 @@ async function renderCar(){
       h('div',{class:'main'},
         h('div',{class:'t'}, fmtDate(docDate(d))+(kmNum(d)!=null?` · ${kmNum(d).toLocaleString('pt-PT')} km`:'')),
         h('div',{class:'s'}, [d.oficina, d.assinatura, d.pecas.filter(p=>!p.riscado).map(p=>p.descricao).filter(Boolean).slice(0,3).join(', ')].filter(Boolean).join(' · ')),
-        h('div',{class:'chips'}, chip(STATUS[st],'st-'+st), d.estado!=='orcamento'?chip(ESTADOS[d.estado],'es-'+d.estado):null)),
+        h('div',{class:'chips'}, chip(STATUS[st],'st-'+st))),
       h('div',{class:'v'}, money(calc(d).total))));
   }
   v.append(h('div',{class:'mhead'},h('span',{},'Visitas'),h('span',{})), ul);
@@ -957,13 +1013,13 @@ function table(head,rows){
 }
 async function renderStats(){
   const v=$('#vStats'); v.replaceChildren();
-  let docs=await allDocs(); if (statsOnlyValid) docs=docs.filter(d=>d.validado);
+  let docs=await allDocs(); if (statsOnlyValid) docs=docs.filter(isLocked);
   const {y,m}=statsLvl;
   const sel=docs.filter(d=>{ const dd=docDate(d); return (!y||dd.slice(0,4)===y) && (!m||dd.slice(5,7)===m); });
   const link=(txt,st)=>h('a',{href:'#',onclick:e=>{ e.preventDefault(); go(st,true); }},txt);
   v.append(h('div',{class:'crumbs'}, link('Todos os anos',{v:'vStats'}), y?' › ':null, y?(m?link(y,{v:'vStats',y}):y):null, m?' › '+MESES[+m-1]:null));
   const cb=h('input',{type:'checkbox',checked:statsOnlyValid}); cb.onchange=()=>{ statsOnlyValid=cb.checked; renderStats(); };
-  v.append(h('label',{class:'small muted',style:'display:flex;gap:8px;align-items:center;margin-bottom:10px'}, cb, 'Contar só orçamentos validados'));
+  v.append(h('label',{class:'small muted',style:'display:flex;gap:8px;align-items:center;margin-bottom:10px'}, cb, 'Contar só validados, aprovados e pagos'));
   if (!sel.length){ v.append(h('div',{class:'card muted'},'Sem orçamentos neste período.')); return; }
 
   v.append(card(m ? `${MESES[+m-1]} ${y}` : (y || 'Todos os anos'), kpis(agg(sel))));
@@ -1034,11 +1090,11 @@ async function exportXlsx(docs, name){
     docs=[...docs].sort((a,b)=>docDate(a).localeCompare(docDate(b)));
     const wb=X.utils.book_new();
     const orc=docs.map(d=>{ const c=calc(d); return [xlSerial(docDate(d)),d.matricula||'',d.marca||'',d.modelo||'',d.kms||'',d.oficina||'',d.nipc||'',d.assinatura||'',
-      ESTADOS[d.estado]||'',d.estado==='pago'&&d.pagoEm?xlSerial(d.pagoEm):'',d.validado?'Sim':'Não',c.material,parseNum(d.mo_horas)??'',c.mo,c.base,c.iva,c.total,
+      STATUS_TXT[status(d)],d.estado==='pago'&&d.pagoEm?xlSerial(d.pagoEm):'',c.material,parseNum(d.mo_horas)??'',c.mo,c.base,c.iva,c.total,
       d.material_escrito??'',d.total_escrito??'',c.avisos.join(' ')]; });
-    X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Marca','Modelo','Kms','Oficina','NIPC','Mecânico','Estado','Pago em','Validado','Peças','Horas','Mão de obra',
-      'Total s/ IVA','IVA','Total c/ IVA','Material escrito','Total escrito','Avisos'], orc, {0:D,9:D,11:E,13:E,14:E,15:E,16:E,17:E,18:E},
-      [11,10,12,12,9,28,12,14,11,11,9,11,7,12,12,10,12,12,12,40]), 'Orçamentos');
+    X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Marca','Modelo','Kms','Oficina','NIPC','Mecânico','Estado','Pago em','Peças','Horas','Mão de obra',
+      'Total s/ IVA','IVA','Total c/ IVA','Material escrito','Total escrito','Avisos'], orc, {0:D,9:D,10:E,12:E,13:E,14:E,15:E,16:E,17:E},
+      [11,10,12,12,9,28,12,14,11,11,11,7,12,12,10,12,12,12,40]), 'Orçamentos');
     const pec=[]; for (const d of docs) for (const p of d.pecas) pec.push([xlSerial(docDate(d)),d.matricula||'',d.oficina||'',p.descricao||'',p.quantidade??'',p.valor??'',p.riscado?'Sim':'']);
     X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Oficina','Peça','Qtd','Valor','Excluída'], pec, {0:D,5:E}, [11,10,28,34,6,11,9]), 'Peças');
     if (docs.length>1){
