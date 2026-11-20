@@ -216,3 +216,11 @@ language sql stable security definer set search_path = public, storage as $$
 $$;
 revoke all on function public.espaco_usado() from public, anon;
 grant execute on function public.espaco_usado() to authenticated;
+
+-- ---------- 6. Acesso pela API (só utilizadores com sessão iniciada) ---
+grant usage on schema public to authenticated;
+grant select, update                 on public.perfis     to authenticated;
+grant select, insert, update, delete on public.orcamentos to authenticated;
+grant select                         on public.historico  to authenticated;
+grant select, insert, update         on public.viaturas   to authenticated;
+revoke all on public.perfis, public.orcamentos, public.historico, public.viaturas from anon;
