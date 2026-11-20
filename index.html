@@ -352,7 +352,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.6';
+const APP_VERSION='3.6.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -560,7 +560,7 @@ Trabalha com cuidado, linha a linha, e só depois preenche os valores. Regras:
 - Matrícula portuguesa: 6 caracteres em 3 pares separados por hífen, num destes formatos: AA-00-AA, 00-AA-00, 00-00-AA ou AA-00-00 (letras maiúsculas). Em "texto_matricula" escreve o que está na folha; em "matricula" a versão corrigida.
 - Marca: usa o nome oficial da marca (ex.: Suzuki, Renault, Peugeot, Citroën, Volkswagen, Mercedes-Benz, BMW, Toyota, Nissan, Fiat, Opel, Ford, Seat, Skoda, Kia, Hyundai, Dacia, Mazda, Honda, Audi, Volvo, Mitsubishi). Modelo: o nome do modelo dessa marca (ex.: Suzuki Ignis, Swift, Vitara). Em "texto_marca_modelo" escreve o que está na folha.
 - "+ IVA" significa iva_incluido=false; "IVA incluído" significa true.
-- data no formato AAAA-MM-DD (as datas na folha estão em DD/MM/AAAA).
+- data no formato AAAA-MM-DD (as datas na folha estão em DD/MM/AAAA). Os orçamentos são recentes: o ano é quase sempre o atual (${new Date().getFullYear()}). Cuidado para não confundir 2026 com 2016 ou 2020 na letra à mão.
 - Campo em branco ou inexistente: null. Não inventes valores.
 - Em notas_leitura, em português, indica valores que foram difíceis de ler (ou null).`;
 const nStr={type:'STRING',nullable:true}, nNum={type:'NUMBER',nullable:true};
@@ -678,12 +678,48 @@ function rememberCar(d){
   sb.from('viaturas').upsert({matricula:k, ...v, atualizado_em:new Date().toISOString()}).then(()=>{});
 }
 
+/* Nomes de pessoas: "ARNALDO", "arnaldo" e "Arnaldo" são a mesma pessoa. */
+const MINUSC=new Set(['da','de','do','das','dos','e']);
+function nomeProprio(v){
+  const t=String(v??'').trim().replace(/\s+/g,' ');
+  if (!t) return '';
+  return t.toLocaleLowerCase('pt-PT').split(' ').map((w,i)=> i>0&&MINUSC.has(w) ? w : w.replace(/(^|[-'])(\p{L})/gu,(m,a,b)=>a+b.toLocaleUpperCase('pt-PT'))).join(' ');
+}
+const semAcentos=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
+/* chave para agrupar (sem maiúsculas nem acentos) e nome a mostrar (o mais usado) */
+let mecNomes=new Map();
+function mecDe(d){ const k=semAcentos(d.assinatura); return k ? (mecNomes.get(k)||nomeProprio(d.assinatura)) : '—'; }
+function atualizaMecNomes(docs){
+  const cont=new Map();
+  for (const d of docs){ const k=semAcentos(d.assinatura); if (!k) continue; const n=nomeProprio(d.assinatura);
+    const m=cont.get(k)||new Map(); m.set(n,(m.get(n)||0)+1); cont.set(k,m); }
+  mecNomes=new Map([...cont].map(([k,m])=>[k,[...m].sort((a,b)=>b[1]-a[1])[0][0]]));
+}
+
+/* Ano mal lido (ex.: 2016 em vez de 2026): se a data cair muito longe de hoje e só um algarismo do ano
+   estiver diferente do ano atual (ou do anterior), corrige e avisa. */
+function corrigeAno(iso){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso||'')) return null;
+  const hoje=new Date(), d=new Date(iso+'T12:00:00');
+  const dias=(d-hoje)/864e5;
+  if (dias<=14 && dias>=-540) return null;
+  const ano=iso.slice(0,4);
+  for (const y of [hoje.getFullYear(), hoje.getFullYear()-1]){
+    const ys=String(y); if ([...ys].filter((c,i)=>c!==ano[i]).length!==1) continue;
+    const novo=ys+iso.slice(4), dd=(new Date(novo+'T12:00:00')-hoje)/864e5;
+    if (dd<=14 && dd>=-400) return novo;
+  }
+  return null;
+}
 function normalize(x){
   const o={};
   for (const k of TEXT_FIELDS) o[k]= x[k]==null||x[k]==='' ? null : String(x[k]);
   for (const k of NUM_FIELDS) o[k]=parseNum(x[k]);
   o.iva_incluido = x.iva_incluido===true;
   o.matricula=normPlate(o.matricula);
+  if (o.assinatura) o.assinatura=nomeProprio(o.assinatura);
+  const anoOk=corrigeAno(o.data);
+  if (anoOk){ o.notas_leitura=[o.notas_leitura, `A data lia-se ${fmtDate(o.data)}; assumi ${fmtDate(anoOk)}. Confirma o ano.`].filter(Boolean).join(' '); o.data=anoOk; }
   o.pecas=(Array.isArray(x.pecas)?x.pecas:[]).map(p=>({descricao:String(p.descricao||''),quantidade:parseNum(p.quantidade),valor:parseNum(p.valor),riscado:!!p.riscado}));
   const car=getCars()[o.matricula];
   if (car){ o.marca=car.marca; o.modelo=car.modelo; o.viaturaDaMemoria=true; } else o.viaturaDaMemoria=false;
@@ -735,6 +771,8 @@ function calc(d){
   if (me!=null && Math.abs(me-material)>0.005) avisos.push(`A soma das peças (${money(material)}) difere do material escrito na folha (${money(me)}): diferença de ${money(r2(material-me))}.`);
   if (moCalc!=null && mt!=null && Math.abs(moCalc-mt)>0.005) avisos.push(`Mão de obra: ${plain(hrs)} × ${money(ph)} = ${money(moCalc)}, mas na folha está ${money(mt)}.`);
   if (te!=null){ const ref=r2((me ?? material)+mo); if (Math.abs(ref-te)>0.005) avisos.push(`O total escrito (${money(te)}) não bate com material + mão de obra (${money(ref)}).`); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d.data||'') && d.criado){ const dias=(new Date(d.data+'T12:00:00')-d.criado)/864e5;
+    if (dias>14 || dias<-540) avisos.push(`A data do orçamento (${fmtDate(d.data)}) está muito longe da data em que foi registado (${fmtDate(new Date(d.criado).toISOString().slice(0,10))}). Confirma o ano.`); }
   return {material, mo, base, pct, iva, total, avisos};
 }
 
@@ -1477,13 +1515,13 @@ async function renderStats(){
   const gItems=[...groups].reverse().map(([k,g])=>{ const x=agg(g); return {key:k, label: !y ? k : !m ? MESES[+k-1].slice(0,3) : k.slice(8,10), values:[x.pecas+x.mo+x.iva], parts:[x.pecas,x.mo]}; });
   v.append(card(!y ? 'Total c/ IVA por ano' : !m ? 'Total c/ IVA por mês' : 'Total c/ IVA por dia', barChart(gItems,{onClick:drill})),
     card('Peças e mão de obra (s/ IVA)', barChart(gItems.map(it=>({...it, values:it.parts})),{stacked:true, names:['Peças','Mão de obra'], onClick:drill})));
-  const mecTop=[...groupBy(sel,d=>(d.assinatura||'—').trim())].map(([k,g])=>({label:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
+  atualizaMecNomes(sel); const mecTop=[...groupBy(sel,mecDe)].map(([k,g])=>({label:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
   const carTop=[...groupBy(sel.filter(d=>plateOk(normPlate(d.matricula))),d=>normPlate(d.matricula))].map(([k,g])=>({label:k, key:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
   const ofTop=[...groupBy(sel,d=>(d.oficina||'—').trim())].map(([k,g])=>({label:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
   v.append(card('Por mecânico', barChart(mecTop,{horizontal:true, colors:['#1D7A46']})),
     card('Por viatura'+(carTop.length>=10?' (top 10)':''), barChart(carTop,{horizontal:true, colors:['#7A4FB3'], onClick:it=>go({v:'vCar',plate:it.key})})),
     card('Por oficina'+(ofTop.length>=10?' (top 10)':''), barChart(ofTop,{horizontal:true, colors:['#B36B2F']})));
-  const mec=[...groupBy(sel,d=>(d.assinatura||'—').trim())].map(([k,g])=>[k,agg(g)]).sort((a,b)=>b[1].total-a[1].total);
+  const mec=[...groupBy(sel,mecDe)].map(([k,g])=>[k,agg(g)]).sort((a,b)=>b[1].total-a[1].total);
   v.append(card('Mecânicos — detalhe', table(['Mecânico','Orç.','Horas','M. obra','Total'], mec.map(([k,x])=>[k,x.n,plain(x.horas),money(x.mo),money(x.total)]))));
 
   const pm=new Map();
@@ -1618,7 +1656,7 @@ async function buildXlsx(docs, desc={}){
     {h:'Total c/ IVA',k:'total',w:12,f:E},{h:'Material escrito',k:'me',w:12,f:E},{h:'Total escrito',k:'te',w:12,f:E},{h:'Avisos',k:'av',w:40},
     {h:'Criado por',k:'cp',w:16},{h:'Validado por',k:'vp',w:16},{h:'Aprovado por',k:'ap',w:16},{h:'Pagamento registado por',k:'pp',w:16}],
     docs.map(d=>{ const c=calc(d); return {data:utcDate(docDate(d)), mat:d.matricula||'', marca:d.marca||'', modelo:d.modelo||'', kms:d.kms||'', of:d.oficina||'', nipc:d.nipc||'',
-      mec:d.assinatura||'', est:STATUS_TXT[status(d)], pago:d.estado==='pago'&&isoOrNull(d.pagoEm)?utcDate(d.pagoEm):null, pecas:c.material, horas:parseNum(d.mo_horas), mo:c.mo, base:c.base, iva:c.iva, total:c.total,
+      mec:d.assinatura?mecDe(d):'', est:STATUS_TXT[status(d)], pago:d.estado==='pago'&&isoOrNull(d.pagoEm)?utcDate(d.pagoEm):null, pecas:c.material, horas:parseNum(d.mo_horas), mo:c.mo, base:c.base, iva:c.iva, total:c.total,
       me:d.material_escrito??null, te:d.total_escrito??null, av:c.avisos.join(' '), cp:d.criadoPor?nomeDe(d.criadoPor):'', vp:d.validadoPor?nomeDe(d.validadoPor):'', ap:d.aprovadoPor?nomeDe(d.aprovadoPor):'', pp:d.pagoPor?nomeDe(d.pagoPor):''}; }),
     {totals:['pecas','horas','mo','base','iva','total'], fills:(row,i)=>{ row.getCell(9).fill={type:'pattern',pattern:'solid',fgColor:{argb:STATUS_FILL[status(docs[i])]}}; }});
   // Peças
@@ -1630,7 +1668,7 @@ async function buildXlsx(docs, desc={}){
   const men=months.map(([k,g])=>{ const x=agg(g); return {mes:`${MESES[+k.slice(5,7)-1].slice(0,3)} ${k.slice(0,4)}`, n:x.n, pecas:x.pecas, horas:x.horas, mo:x.mo, base:x.base, iva:x.iva, total:x.total}; });
   table('Mensal', [{h:'Mês',k:'mes',w:11},{h:'Orçamentos',k:'n',w:11},{h:'Peças',k:'pecas',w:12,f:E},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total s/ IVA',k:'base',w:12,f:E},{h:'IVA',k:'iva',w:10,f:E},{h:'Total c/ IVA',k:'total',w:12,f:E}], men, {totals:['n','pecas','horas','mo','base','iva','total']});
   // Mecânicos
-  const mec=[...groupBy(docs,d=>(d.assinatura||'—').trim())].map(([k,g])=>{ const x=agg(g); return {mec:k, n:x.n, horas:x.horas, mo:x.mo, total:x.total}; }).sort((x,y)=>y.total-x.total);
+  atualizaMecNomes(docs); const mec=[...groupBy(docs,mecDe)].map(([k,g])=>{ const x=agg(g); return {mec:k, n:x.n, horas:x.horas, mo:x.mo, total:x.total}; }).sort((x,y)=>y.total-x.total);
   table('Mecânicos', [{h:'Mecânico',k:'mec',w:18},{h:'Orçamentos',k:'n',w:11},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total c/ IVA',k:'total',w:12,f:E}], mec, {totals:['n','horas','mo','total']});
   // Viaturas
   const car=[...groupBy(docs,d=>normPlate(d.matricula)||'—')].map(([k,g])=>{ const x=agg(g), l=g[g.length-1]; return {mat:k, vi:[l.marca,l.modelo].filter(Boolean).join(' '), n:x.n, pecas:x.pecas, mo:x.mo, total:x.total}; }).sort((x,y)=>y.total-x.total);
@@ -1728,7 +1766,7 @@ function exRange(){
 async function exFiltered(){
   const [de,ate,periodo]=exRange(), car=$('#exCar').value, of=$('#exOf').value, mec=$('#exMec').value, usr=isAdmin()?$('#exUser').value:'';
   const list=(await allDocs()).filter(d=>{ const dd=docDate(d), st=status(d)==='naolido'?'rever':status(d);
-    return dd>=de && dd<=ate && exSel.has(st) && (!car||normPlate(d.matricula)===car) && (!of||(d.oficina||'').trim()===of) && (!mec||(d.assinatura||'').trim()===mec) && (!usr||d.criadoPor===usr); });
+    return dd>=de && dd<=ate && exSel.has(st) && (!car||normPlate(d.matricula)===car) && (!of||(d.oficina||'').trim()===of) && (!mec||mecDe(d)===mec) && (!usr||d.criadoPor===usr); });
   const filtros=[['Período',periodo],['Estados',EX_ST.filter(([k])=>exSel.has(k)).map(x=>x[1]).join(', ')]];
   if (usr) filtros.push(['Criado por',nomeDe(usr)]);
   if (modoTeste()) filtros.unshift(['Dados','🧪 TESTE']);
@@ -1746,7 +1784,7 @@ async function openExport(preset={}){
   const opts=(sel,vals,all)=>{ $(sel).replaceChildren(h('option',{value:''},all), ...[...new Set(vals.filter(Boolean))].sort().map(v=>h('option',{value:v},v))); };
   opts('#exCar', docs.map(d=>plateOk(normPlate(d.matricula))?normPlate(d.matricula):null), 'Todas as viaturas');
   opts('#exOf', docs.map(d=>(d.oficina||'').trim()), 'Todas as oficinas');
-  opts('#exMec', docs.map(d=>(d.assinatura||'').trim()), 'Todos os mecânicos');
+  atualizaMecNomes(docs); opts('#exMec', docs.map(d=>d.assinatura?mecDe(d):''), 'Todos os mecânicos');
   $('#exUserL').hidden=!isAdmin();
   $('#exUser').replaceChildren(h('option',{value:''},'Todos'), ...activeUsers().map(p=>h('option',{value:p.id},p.nome||p.email)));
   $('#exPer').value=preset.de?'custom':'tudo'; $('#exDe').value=preset.de||''; $('#exAte').value=preset.ate||''; $('#exDates').hidden=!preset.de;
