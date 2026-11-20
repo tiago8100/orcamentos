@@ -350,7 +350,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.4';
+const APP_VERSION='3.4.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -988,7 +988,7 @@ $('#btnDel').onclick=async()=>{
   const docs=(await allDocs()).filter(d=>selected.has(d.id));
   const del=docs.filter(canDelete), fica=docs.length-del.length;
   if (!del.length) return toast('Não tens permissão para apagar os orçamentos selecionados.');
-  if (!await ask(`Apagar ${del.length} orçamento(s)?\n\nNão dá para desfazer.`+(fica?`\n\n${fica} ficam (pagos, ou sem permissão para os apagar).`:''))) return;
+  if (!await ask(`Deseja mesmo eliminar ${del.length} orçamento(s)?\n\nNão dá para desfazer.`+(fica?`\n\n${fica} ficam (pagos, ou sem permissão para os apagar).`:''),{ok:'Sim, eliminar',cancel:'Não',danger:true})) return;
   busy(true,'A apagar…');
   try{ for (const d of del) await dbDel(d.id); toast(`${del.length} orçamento(s) apagado(s).`); }
   catch(e){ toast(errMsg(e)); } finally{ busy(false); }
@@ -1265,7 +1265,7 @@ async function renderDupes(){
 
 async function delCur(){
   if (!canDelete(cur)) return toast(status(cur)==='pago' ? 'Orçamento pago está finalizado e não pode ser apagado.' : 'Não tens permissão para apagar este orçamento.');
-  if (!await ask('Apagar este orçamento?\n\nNão dá para desfazer.')) return;
+  if (!await ask('Deseja mesmo eliminar este orçamento?\n\nO orçamento e as fotos são apagados. Não dá para desfazer.',{ok:'Sim, eliminar',cancel:'Não',danger:true})) return;
   clearTimeout(saveT); saveT=null;
   try{ await dbDel(cur.id); }catch(e){ return toast(errMsg(e)); }
   cur=null; toast('Orçamento apagado.');
@@ -1980,10 +1980,10 @@ async function eliminarUser(p){
     const apagar = window.__autoAsk ? ok==='apagar' : rDel.checked;
     if (!apagar){ destino=window.__autoAsk ? (window.__autoDestino||me.id) : sel.value; if (!destino) return toast('Escolhe para quem passam os orçamentos.'); }
     const txt = apagar
-      ? `⚠️ Apagar ${nome} e os ${n} orçamento${n>1?'s':''}?\n\nOs orçamentos e as fotos são apagados para sempre.`
-      : `Eliminar ${nome}?\n\nOs ${n} orçamento${n>1?'s':''} passam para ${nomeDe(destino)}. A conta é apagada e deixa de conseguir entrar.`;
-    if (!await ask(txt,{ok:'Eliminar',danger:true})) return;
-  } else if (!await ask(`Eliminar ${nome}?\n\nNão tem orçamentos. A conta é apagada e deixa de conseguir entrar.`,{ok:'Eliminar',danger:true})) return;
+      ? `⚠️ Deseja mesmo eliminar ${nome} e apagar ${n>1?`os ${n} orçamentos`:'o orçamento'}?\n\nA conta, os orçamentos e as fotos são apagados para sempre.`
+      : `Deseja mesmo eliminar ${nome}?\n\n${n>1?`Os ${n} orçamentos passam`:'O orçamento passa'} para ${nomeDe(destino)}. A conta é apagada e deixa de conseguir entrar. Não dá para desfazer.`;
+    if (!await ask(txt,{ok:'Sim, eliminar',cancel:'Não',danger:true})) return;
+  } else if (!await ask(`Deseja mesmo eliminar ${nome}?\n\nNão tem orçamentos. A conta é apagada e deixa de conseguir entrar. Não dá para desfazer.`,{ok:'Sim, eliminar',cancel:'Não',danger:true})) return;
   busy(true,'A eliminar utilizador…');
   try{
     const r=await callFn({action:'eliminar', id:p.id, destino});
