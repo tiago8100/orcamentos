@@ -135,7 +135,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='1.1';
+const APP_VERSION='1.2';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -237,6 +237,7 @@ const SCHEMA={type:'OBJECT',properties:{
   mo_horas:nNum, mo_preco_hora:nNum, mo_total:nNum, material_escrito:nNum, total_escrito:nNum,
   iva_incluido:{type:'BOOLEAN',nullable:true}, observacoes:nStr, notas_leitura:nStr
 }, required:['pecas']};
+let lastDiag=null;
 const TEXT_FIELDS=['oficina','nipc','morada','cliente','marca','modelo','matricula','kms','data','assinatura','observacoes','notas_leitura'];
 const NUM_FIELDS=['mo_horas','mo_preco_hora','mo_total','material_escrito','total_escrito'];
 
@@ -245,9 +246,11 @@ async function readSheet(blob){
   if (!cfg.key) throw new Error('Falta a chave da API do Gemini. Abre as Definições ⚙️.');
   const model=(cfg.model||'gemini-flash-latest').trim().replace(/^models\//,'');
   const b64=(await blobToDataURL(blob)).split(',')[1];
-  const call=async(fast)=>{
+  // Gemini 3.x usa thinkingLevel; os 2.5 usam thinkingBudget. Tenta do mais rápido para o mais compatível.
+  const modes = cfg.thinking===true ? [null] : [{thinkingLevel:'minimal'},{thinkingBudget:0},null];
+  const call=async(tc)=>{
     const gc={temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA};
-    if (fast) gc.thinkingConfig={thinkingBudget:0};   // sem "raciocínio": muito mais rápido
+    if (tc) gc.thinkingConfig=tc;
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
       method:'POST',
       headers:{'Content-Type':'application/json','x-goog-api-key':cfg.key},
@@ -255,9 +258,16 @@ async function readSheet(blob){
     });
     return {r, j: await r.json().catch(()=>({}))};
   };
-  let {r,j}=await call(cfg.thinking!==true);
-  // alguns modelos não aceitam desligar o raciocínio: tenta de novo sem essa opção
-  if (!r.ok && r.status===400 && /thinking/i.test((j.error&&j.error.message)||'')) ({r,j}=await call(false));
+  const t0=Date.now();
+  let r,j,used=null;
+  for (const tc of modes){
+    ({r,j}=await call(tc)); used=tc;
+    if (r.ok || r.status!==400 || !/think/i.test((j.error&&j.error.message)||'')) break;
+  }
+  const u=j.usageMetadata||{};
+  lastDiag={segundos:Math.round((Date.now()-t0)/100)/10, modelo:j.modelVersion||model,
+    raciocinio: used ? Object.entries(used).map(([k,v])=>k+'='+v).join('') : 'por defeito',
+    tokensRaciocinio:u.thoughtsTokenCount||0};
   if (!r.ok){
     const m=(j.error&&j.error.message)||r.statusText;
     if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco.\n'+m);
@@ -347,7 +357,7 @@ async function newFromPhoto(file){
   const now=Date.now();
   const d={id:(crypto.randomUUID?crypto.randomUUID():String(now)), criado:now, atualizado:now, foto:blob, pecas:[], iva_pct:parseNum(getCfg().iva)??23, erro:null};
   busy(true,'A ler a folha com o Gemini…');
-  try{ Object.assign(d, normalize(await readSheet(blob))); }
+  try{ Object.assign(d, normalize(await readSheet(blob))); d.diag=lastDiag; }
   catch(e){ d.erro=e.message||String(e); }
   await dbPut(d);
   busy(false);
@@ -383,7 +393,9 @@ function renderEdit(){
     const img=h('img',{class:'photo',src:photoURL,alt:'Foto da folha'});
     img.onclick=()=>img.classList.toggle('zoom');
     v.append(h('div',{class:'card'}, img,
-      h('div',{class:'row',style:'margin-top:10px'}, h('button',{onclick:reread},'🔄 Ler outra vez'))));
+      h('div',{class:'row',style:'margin-top:10px'}, h('button',{onclick:reread},'🔄 Ler outra vez')),
+      cur.diag ? h('p',{class:'muted',style:'font-size:12px;margin:8px 0 0'},
+        `⏱ Lido em ${plain(cur.diag.segundos)} s · ${cur.diag.modelo} · raciocínio: ${cur.diag.raciocinio} (${cur.diag.tokensRaciocinio} tokens)`) : null));
   }
 
   const recalcMO=()=>{ const a=parseNum(cur.mo_horas), b=parseNum(cur.mo_preco_hora); if (a!=null&&b!=null){ cur.mo_total=r2(a*b); $('#moTotal').value=plain(cur.mo_total); } };
@@ -455,7 +467,7 @@ async function reread(){
   if (!cur.foto) return;
   if (!confirm('Ler a foto outra vez? Os campos editados à mão serão substituídos.')) return;
   busy(true,'A ler a folha com o Gemini…');
-  try{ Object.assign(cur, normalize(await readSheet(cur.foto)), {erro:null}); await save(); renderEdit(); toast('Folha lida outra vez.'); }
+  try{ Object.assign(cur, normalize(await readSheet(cur.foto)), {erro:null, diag:lastDiag}); await save(); renderEdit(); toast('Folha lida outra vez.'); }
   catch(e){ toast(e.message||String(e)); }
   finally{ busy(false); }
 }
