@@ -289,6 +289,7 @@
 <div id="fab" hidden>
   <label class="btn primary">📷 Foto<input type="file" accept="image/*" capture="environment" id="inCam" hidden></label>
   <label class="btn">🖼️ Galeria<input type="file" accept="image/*" id="inGal" hidden></label>
+  <label class="btn">📄 PDF<input type="file" accept="application/pdf,.pdf" id="inPdf" hidden></label>
   <button id="btnManual">✍️ Manual</button>
 </div>
 <nav id="nav" hidden>
@@ -351,7 +352,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.5';
+const APP_VERSION='3.6';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -515,7 +516,32 @@ function loadImg(blob){
   return new Promise((ok,ko)=>{ const url=URL.createObjectURL(blob), img=new Image();
     img.onload=()=>{ URL.revokeObjectURL(url); ok(img); }; img.onerror=e=>{ URL.revokeObjectURL(url); ko(e); }; img.src=url; });
 }
+/* PDF → imagem: as páginas (até 4) ficam umas por baixo das outras numa só imagem. */
+const isPdf=f=>f && (f.type==='application/pdf' || /\.pdf$/i.test(f.name||''));
+let pdfjs=null;
+async function pdfToImage(file){
+  if (!pdfjs){
+    pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+  }
+  const doc=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  const n=Math.min(doc.numPages,4);
+  if (doc.numPages>4) toast(`O PDF tem ${doc.numPages} páginas; só leio as 4 primeiras.`);
+  const W=1600, pages=[];
+  for (let i=1;i<=n;i++){
+    const pg=await doc.getPage(i), v0=pg.getViewport({scale:1}), v=pg.getViewport({scale:W/v0.width});
+    const c=document.createElement('canvas'); c.width=Math.round(v.width); c.height=Math.round(v.height);
+    const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+    await pg.render({canvasContext:ctx, viewport:v}).promise; pages.push(c);
+  }
+  const H=pages.reduce((a,c)=>a+c.height,0), out=document.createElement('canvas');
+  const sc=Math.min(1, 6000/H); out.width=Math.round(W*sc); out.height=Math.round(H*sc);
+  const o=out.getContext('2d'); o.fillStyle='#fff'; o.fillRect(0,0,out.width,out.height);
+  let y=0; for (const c of pages){ o.drawImage(c,0,y,c.width*sc,c.height*sc); y+=c.height*sc; }
+  return new Promise(r=>out.toBlob(r,'image/jpeg',0.85));
+}
 async function prepImage(file){
+  if (isPdf(file)) return pdfToImage(file);
   const img=await loadImg(file);
   const max=2048, w=img.naturalWidth, hh=img.naturalHeight, sc=Math.min(1, max/Math.max(w,hh));
   const c=document.createElement('canvas'); c.width=Math.round(w*sc); c.height=Math.round(hh*sc);
@@ -1001,10 +1027,10 @@ $('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); await refreshAl
 /* ---------- novos orçamentos ---------- */
 async function newFromPhoto(file){
   let blob;
-  busy(true,'A preparar a foto…');
-  try{ blob=await prepImage(file); }catch(e){ busy(false); return toast('Não consegui abrir a imagem.'); }
+  busy(true, isPdf(file) ? 'A abrir o PDF…' : 'A preparar a foto…');
+  try{ blob=await prepImage(file); }catch(e){ busy(false); return toast(isPdf(file) ? 'Não consegui abrir o PDF. '+(e.message||'') : 'Não consegui abrir a imagem.'); }
   busy(false);
-  if (getCfg().crop!==false){ blob=await editPhoto(blob); if (!blob) return; }
+  if (getCfg().crop!==false && !isPdf(file)){ blob=await editPhoto(blob); if (!blob) return; }
   const now=Date.now(), id=uid();
   const d={id, criado:now, atualizado:now, fotos:[], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null, teste:modoTeste()};
   defaultShare(d);
@@ -1022,7 +1048,7 @@ async function newFromPhoto(file){
   busy(false);
   openDoc(d);
 }
-for (const id of ['inCam','inGal']){
+for (const id of ['inCam','inGal','inPdf']){
   $('#'+id).addEventListener('change', e=>{ const f=e.target.files[0]; e.target.value=''; if (f) newFromPhoto(f); });
 }
 $('#btnManual').onclick=async()=>{
@@ -1079,8 +1105,9 @@ function renderEdit(){
     card('Resumo', h('div',{id:'avisos'}), h('div',{class:'sum',id:'sum'})),
     card('Fotos', h('div',{class:'thumbs',id:'thumbs'}),
       h('div',{class:'row edit-only',style:'margin-top:10px'},
-        h('label',{class:'btn'},'📷 Tirar foto', h('input',{type:'file',accept:'image/*',capture:'environment',hidden:true,onchange:addPhotoInput})),
-        h('label',{class:'btn'},'🖼️ Galeria', h('input',{type:'file',accept:'image/*',hidden:true,onchange:addPhotoInput}))),
+        h('label',{class:'btn'},'📷 Foto', h('input',{type:'file',accept:'image/*',capture:'environment',hidden:true,onchange:addPhotoInput})),
+        h('label',{class:'btn'},'🖼️ Galeria', h('input',{type:'file',accept:'image/*',hidden:true,onchange:addPhotoInput})),
+        h('label',{class:'btn'},'📄 PDF', h('input',{type:'file',accept:'application/pdf,.pdf',hidden:true,onchange:addPhotoInput}))),
       cur.diag ? h('p',{class:'muted small',style:'margin:8px 0 0'},
         `⏱ ${plain(cur.diag.segundos)} s · ${cur.diag.leituras||1} leitura(s) · ${cur.diag.verificado||''} · ${cur.diag.modelo}`) : null),
     card('Partilha', h('div',{id:'shareBox'})),
@@ -1194,8 +1221,10 @@ function renderThumbs(){
 }
 async function addPhotoInput(e){
   const f=e.target.files[0]; e.target.value=''; if (!f) return;
-  let b; try{ b=await prepImage(f); }catch{ return toast('Não consegui abrir a imagem.'); }
-  if (getCfg().crop!==false){ b=await editPhoto(b); if (!b) return; }
+  if (isPdf(f)) busy(true,'A abrir o PDF…');
+  let b; try{ b=await prepImage(f); }catch(e){ busy(false); return toast(isPdf(f) ? 'Não consegui abrir o PDF. '+(e.message||'') : 'Não consegui abrir a imagem.'); }
+  busy(false);
+  if (getCfg().crop!==false && !isPdf(f)){ b=await editPhoto(b); if (!b) return; }
   busy(true,'A enviar a foto…');
   try{ cur.fotos.push(await uploadFoto(cur.id, b)); }catch(e){ busy(false); return toast('Não consegui enviar a foto: '+errMsg(e)); }
   busy(false); renderThumbs(); changed();
