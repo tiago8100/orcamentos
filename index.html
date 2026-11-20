@@ -271,7 +271,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.0.1';
+const APP_VERSION='3.0.2';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -792,14 +792,17 @@ async function newFromPhoto(file){
   busy(false);
   if (getCfg().crop!==false){ blob=await editPhoto(blob); if (!blob) return; }
   const now=Date.now(), id=uid();
-  let foto;
-  busy(true,'A enviar a foto…');
-  try{ foto=await uploadFoto(id, blob); }catch(e){ busy(false); return toast('Não consegui enviar a foto: '+errMsg(e)); }
-  const d={id, criado:now, atualizado:now, fotos:[foto], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null};
+  const d={id, criado:now, atualizado:now, fotos:[], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null};
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
+  // a foto sobe para a cloud ao mesmo tempo que o Gemini lê
+  const up=uploadFoto(id, blob).then(f=>({f}), e=>({e}));
   try{ Object.assign(d, await readSmart(blob, ctl.signal)); }
   catch(e){ d.erro = e.name==='AbortError' ? 'Leitura cancelada. Preenche à mão, ou toca na foto → 📖 Ler esta foto.' : (e.message||String(e)); }
+  busy(true,'A guardar…');
+  const u=await up;
+  if (u.e){ busy(false); return toast('Não consegui enviar a foto: '+errMsg(u.e)); }
+  d.fotos=[u.f];
   try{ await dbPut(d); }catch(e){ busy(false); return toast('Não consegui guardar: '+errMsg(e)); }
   busy(false);
   openDoc(d);
