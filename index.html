@@ -159,6 +159,14 @@
   .modal{position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center}
   .modal .sheet{background:var(--card);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + var(--safe))}
   .modal .sheet h2{margin:0 0 12px;font-size:18px}
+  html,body{overscroll-behavior-y:contain}
+  #dlg{position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px}
+  #dlgCard{background:var(--card);color:var(--ink);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  #dlgCard .row{flex-wrap:wrap}
+  #dlgCard .row button{flex:1 1 40%}
+  #ptr{position:fixed;top:64px;left:50%;z-index:6;width:36px;height:36px;border-radius:50%;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--accent);transform:translateX(-50%)}
+  #ptr.spin{animation:ptrsp .8s linear infinite}
+  @keyframes ptrsp{from{transform:translateX(-50%) translateY(60px) rotate(0)}to{transform:translateX(-50%) translateY(60px) rotate(360deg)}}
   [hidden]{display:none!important}
   #toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + 80px + var(--safe));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:30;max-width:90%;text-align:center}
   #toast.show{opacity:1}
@@ -210,6 +218,7 @@
     <div class="card">
       <h2>Conta</h2>
       <p id="meInfo" style="margin-top:0"></p>
+      <button id="btnMyPw" style="width:100%;margin-bottom:8px">🔑 Mudar a minha password</button>
       <button id="btnLogout" style="width:100%">🚪 Terminar sessão</button>
     </div>
     <div class="card">
@@ -329,12 +338,14 @@
     <button id="exClose" style="width:100%">Fechar</button>
   </div>
 </div>
+<div id="dlg" hidden><div id="dlgCard"></div></div>
+<div id="ptr" hidden>⟳</div>
 <div id="busy" hidden><div class="spinner"></div><p id="busyMsg"></p><button id="busyCancel" hidden>✕ Cancelar</button></div>
 <div id="toast"></div>
 
 <script>
 'use strict';
-const APP_VERSION='3.2';
+const APP_VERSION='3.3';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -726,6 +737,96 @@ function dupesOf(d, all){
     && !ign.includes(o.id) && !(o.dupIgnorados||[]).includes(d.id));
 }
 
+/* ---------- janelas de pergunta da própria app (em vez das do browser) ---------- */
+function dlg({title='', body='', inputs=[], buttons=[{label:'OK',value:true,cls:'primary'}], dismiss=null}={}){
+  return new Promise(resolve=>{
+    const box=$('#dlg'), card=$('#dlgCard');
+    const ins=inputs.map(o=>h('input',{type:o.type||'text', placeholder:o.placeholder||'', autocomplete:o.autocomplete||'off', value:o.value||''}));
+    const done=v=>{ box.hidden=true; document.removeEventListener('keydown',onKey); resolve(v); };
+    const onKey=e=>{ if (e.key==='Escape') done(dismiss); if (e.key==='Enter' && ins.length && buttons.some(x=>x.cls&&x.cls.includes('primary'))) done(ins.map(i=>i.value)); };
+    card.replaceChildren(...[
+      title ? h('h3',{style:'margin:0 0 8px;font-size:18px'}, title) : null,
+      body ? (body instanceof Node ? body : h('p',{style:'margin:0 0 12px;white-space:pre-wrap;color:var(--ink)'}, body)) : null,
+      ...ins.map(i=>h('div',{style:'margin-bottom:10px'},i)),
+      h('div',{class:'row',style:'margin-top:6px'}, ...buttons.map(b=>h('button',{class:b.cls||null, onclick:e=>{
+        if (b.action){ b.action(e); return; }
+        done(b.value===undefined ? (ins.length ? ins.map(i=>i.value) : true) : b.value); }}, b.label)))
+    ].filter(Boolean));
+    box.onclick=e=>{ if (e.target===box) done(dismiss); };
+    document.addEventListener('keydown',onKey);
+    box.hidden=false; if (ins[0]) setTimeout(()=>ins[0].focus(),50);
+  });
+}
+/* confirmar: o primeiro parágrafo é o título; ações destrutivas ficam a vermelho */
+function ask(text, {ok, cancel='Cancelar', danger}={}){
+  if (window.__autoAsk) return Promise.resolve(true);
+  const [first,...rest]=String(text).split('\n\n');
+  const isDanger = danger ?? /^(⚠️\s*)?(apagar|remover|desativar|desligar|terminar)/i.test(first.trim());
+  const okLabel = ok || (isDanger ? (first.match(/^(⚠️\s*)?(\S+)/i)||[])[2]?.replace(/^./,c=>c.toUpperCase()) || 'Sim' : 'Confirmar');
+  return dlg({title:first, body:rest.join('\n\n'), buttons:[{label:cancel,value:false},{label:okLabel,value:true,cls:isDanger?'danger':'primary'}], dismiss:false});
+}
+async function askText(title, {placeholder='', type='text', body=''}={}){
+  if (window.__autoAsk) return window.__autoAskText||'';
+  const r=await dlg({title, body, inputs:[{type,placeholder}], buttons:[{label:'Cancelar',value:null},{label:'Guardar',cls:'primary'}], dismiss:null});
+  return r ? r[0] : null;
+}
+
+/* ---------- dados de acesso para um utilizador ---------- */
+const APP_LINK='https://tiago8100.github.io/orcamentos/';
+function accessMessage(nome, email, pw){
+  return `Olá ${nome||''}! Já tens acesso à app Orçamentos Auto.
+
+🔗 App: ${APP_LINK}
+📧 Email: ${email}
+🔑 Password ${pw?'inicial':''}: ${pw||'(pede-a ao administrador)'}
+
+Como instalar no telemóvel (Android):
+1. Abre o link no Chrome.
+2. Menu ⋮ → "Instalar app" (ou "Adicionar ao ecrã principal").
+3. Abre a app e entra com o email e a password.
+4. Em ⚙️ Definições → Conta, muda a password.`.replace(/Password\s+:/,'Password:');
+}
+function openLink(href, newTab){ const a=h('a',{href, target:newTab?'_blank':null, rel:'noopener'}); document.body.append(a); a.click(); a.remove(); }
+function sendAccess(nome, email, pw){
+  const msg=accessMessage(nome, email, pw), subject='Acesso à app Orçamentos Auto';
+  const btns=[
+    {label:'📧 Email', cls:'primary', action:()=>openLink(`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`)},
+    {label:'💬 WhatsApp', action:()=>openLink(`https://wa.me/?text=${encodeURIComponent(msg)}`, true)},
+    navigator.share ? {label:'📤 Partilhar', action:async()=>{ try{ await navigator.share({title:subject, text:msg}); }catch(e){} }} : null,
+    {label:'📋 Copiar', action:async()=>{ try{ await navigator.clipboard.writeText(msg); toast('Mensagem copiada.'); }catch{ toast('Não consegui copiar.'); } }},
+    {label:'Fechar', value:true}
+  ].filter(Boolean);
+  return dlg({title:'Enviar dados de acesso', body:h('pre',{style:'white-space:pre-wrap;font:inherit;font-size:14px;background:var(--bg);border-radius:10px;padding:10px;margin:0 0 10px;max-height:40vh;overflow:auto'}, msg), buttons:btns, dismiss:true});
+}
+async function changeMyPassword(){
+  const r=await dlg({title:'Mudar a minha password', body:'Escolhe uma password nova (mínimo 6 caracteres).',
+    inputs:[{type:'password',placeholder:'Password nova',autocomplete:'new-password'},{type:'password',placeholder:'Repetir a password',autocomplete:'new-password'}],
+    buttons:[{label:'Cancelar',value:null},{label:'Guardar',cls:'primary'}], dismiss:null});
+  if (!r) return;
+  if (r[0].length<6) return toast('A password tem de ter pelo menos 6 caracteres.');
+  if (r[0]!==r[1]) return toast('As passwords não coincidem.');
+  busy(true,'A gravar…');
+  const {error}=await sb.auth.updateUser({password:r[0]});
+  busy(false);
+  toast(error ? 'Não foi possível mudar: '+errMsg(error) : 'Password alterada.');
+}
+
+/* ---------- puxar para atualizar (sem recarregar a app) ---------- */
+async function refreshAll(){
+  try{ await Promise.all([allDocs(true), loadCars(), loadPerfis(), loadPartilhas()]); }catch(e){ toast(errMsg(e)); }
+  renderList();
+}
+(function(){
+  let y0=null, dy=0, busyR=false;
+  const ind=$('#ptr');
+  addEventListener('touchstart',e=>{ if (view==='vList' && !selecting && scrollY<=0 && !busyR && $('#lock').hidden) { y0=e.touches[0].clientY; dy=0; } else y0=null; },{passive:true});
+  addEventListener('touchmove',e=>{ if (y0===null) return; dy=e.touches[0].clientY-y0; if (dy<=0){ ind.hidden=true; return; }
+    ind.hidden=false; ind.style.transform=`translateX(-50%) translateY(${Math.min(dy/2,60)}px) rotate(${dy*2}deg)`; ind.style.opacity=Math.min(1,dy/80); },{passive:true});
+  addEventListener('touchend',async()=>{ if (y0===null) return; y0=null;
+    if (dy>90){ busyR=true; ind.classList.add('spin'); await refreshAll(); ind.classList.remove('spin'); busyR=false; toast('Atualizado.'); }
+    ind.hidden=true; dy=0; });
+})();
+
 /* ---------- navegação ---------- */
 const TABS=['vList','vStats','vSettings'];
 let view='vList', cur=null, curCar=null, statsLvl={y:null,m:null};
@@ -858,14 +959,14 @@ $('#btnDel').onclick=async()=>{
   const docs=(await allDocs()).filter(d=>selected.has(d.id));
   const del=docs.filter(canDelete), fica=docs.length-del.length;
   if (!del.length) return toast('Não tens permissão para apagar os orçamentos selecionados.');
-  if (!confirm(`Apagar ${del.length} orçamento(s)? Não dá para desfazer.`+(fica?`\n\n${fica} ficam (pagos, ou sem permissão para os apagar).`:''))) return;
+  if (!await ask(`Apagar ${del.length} orçamento(s)?\n\nNão dá para desfazer.`+(fica?`\n\n${fica} ficam (pagos, ou sem permissão para os apagar).`:''))) return;
   busy(true,'A apagar…');
   try{ for (const d of del) await dbDel(d.id); toast(`${del.length} orçamento(s) apagado(s).`); }
   catch(e){ toast(errMsg(e)); } finally{ busy(false); }
   exitSelect();
 };
 $('#q').addEventListener('input',e=>{ q=e.target.value.trim(); renderList(); });
-$('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); try{ await Promise.all([allDocs(true), loadCars(), loadPerfis(), loadPartilhas()]); }catch(e){ toast(errMsg(e)); } busy(false); renderList(); };
+$('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); await refreshAll(); busy(false); };
 
 /* ---------- novos orçamentos ---------- */
 async function newFromPhoto(file){
@@ -1028,26 +1129,26 @@ async function stageTo(patch, msg){
   }catch(e){ toast(errMsg(e)); }
   finally{ busy(false); }
 }
-function validar(){
+async function validar(){
   const c=calc(cur);
-  if (c.avisos.length && !confirm('Os totais não batem com a folha:\n\n'+c.avisos.join('\n')+'\n\nValidar mesmo assim?')) return;
+  if (c.avisos.length && !await ask('Os totais não batem com a folha\n\n'+c.avisos.join('\n')+'\n\nValidar mesmo assim?',{ok:'✓ Validar'})) return;
   stageTo({validado:true}, 'Orçamento validado.');
 }
-function aprovar(){
-  if (!confirm('Aprovar este orçamento?')) return;
+async function aprovar(){
+  if (!await ask('Aprovar este orçamento?',{ok:'👍 Aprovar'})) return;
   stageTo({estado:'aprovado'}, 'Orçamento aprovado.');
 }
-function pagar(date){
+async function pagar(date){
   if (!date) return toast('Escolhe a data do pagamento.');
-  if (!confirm(`Marcar como pago em ${fmtDate(date)}?\n\nO orçamento fica finalizado e deixa de poder ser alterado ou apagado.`)) return;
+  if (!await ask(`Marcar como pago em ${fmtDate(date)}?\n\nO orçamento fica finalizado e deixa de poder ser alterado ou apagado.`,{ok:'💶 Marcar como pago'})) return;
   stageTo({estado:'pago', pago_em:date}, 'Orçamento pago e finalizado.');
 }
-function reabrir(){
+async function reabrir(){
   const st=status(cur);
   const msg = st==='pago' ? '⚠️ Este orçamento já está PAGO e finalizado.\n\nReabrir volta-o a "Aprovado" e apaga a data de pagamento. Tens a certeza?'
     : st==='aprovado' ? 'Reabrir volta o orçamento a "Validado" (deixa de estar aprovado). Continuar?'
     : 'Reabrir volta o orçamento a "A validar" e desbloqueia os valores para edição. Continuar?';
-  if (!confirm(msg)) return;
+  if (!await ask(msg,{ok:'↩︎ Reabrir',danger:st==='pago'})) return;
   const patch = st==='pago' ? {estado:'aprovado'} : st==='aprovado' ? {estado:'orcamento', validado:true} : {validado:false};
   stageTo(patch, 'Orçamento reaberto.');
 }
@@ -1071,7 +1172,7 @@ async function addPhotoInput(e){
   toast('Foto anexada. Toca nela para a ler com o Gemini.');
 }
 async function readPhoto(i){
-  if ((cur.pecas.some(p=>p.descricao||p.valor!=null) || cur.matricula) && !confirm('Ler esta foto com o Gemini? Os valores atuais serão substituídos.')) return;
+  if ((cur.pecas.some(p=>p.descricao||p.valor!=null) || cur.matricula) && !await ask('Ler esta foto com o Gemini? Os valores atuais serão substituídos.')) return;
   closeViewer();
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
@@ -1128,14 +1229,14 @@ async function renderDupes(){
   box.append(h('div',{class:'alert warn'},
     `⚠️ Parece repetido: já existe um orçamento de ${o.matricula} de ${fmtDate(o.data)} com o mesmo total (${money(calc(o).total)}).`,
     h('div',{class:'row',style:'margin-top:8px'},
-      h('button',{onclick:async()=>{ if (!confirm('Apagar o orçamento antigo e ficar com este?')) return; try{ for (const x of ds) await dbDel(x.id); toast('Orçamento antigo apagado.'); }catch(e){ toast(errMsg(e)); } renderDupes(); }},'Substituir o antigo'),
+      h('button',{onclick:async()=>{ if (!await ask('Apagar o orçamento antigo e ficar com este?')) return; try{ for (const x of ds) await dbDel(x.id); toast('Orçamento antigo apagado.'); }catch(e){ toast(errMsg(e)); } renderDupes(); }},'Substituir o antigo'),
       h('button',{onclick:()=>{ cur.dupIgnorados=[...(cur.dupIgnorados||[]),...ds.map(x=>x.id)]; changed(); renderDupes(); }},'Não é repetido'),
       h('button',{onclick:()=>openDoc(o)},'Ver o outro'))));
 }
 
 async function delCur(){
   if (!canDelete(cur)) return toast(status(cur)==='pago' ? 'Orçamento pago está finalizado e não pode ser apagado.' : 'Não tens permissão para apagar este orçamento.');
-  if (!confirm('Apagar este orçamento? Não dá para desfazer.')) return;
+  if (!await ask('Apagar este orçamento?\n\nNão dá para desfazer.')) return;
   clearTimeout(saveT); saveT=null;
   try{ await dbDel(cur.id); }catch(e){ return toast(errMsg(e)); }
   cur=null; toast('Orçamento apagado.');
@@ -1185,7 +1286,7 @@ $('#vCrop').onclick=async()=>{
   openViewer(vIdx); renderThumbs();
 };
 $('#vDel').onclick=async()=>{
-  if (!confirm('Remover esta foto do orçamento?')) return;
+  if (!await ask('Remover esta foto do orçamento?')) return;
   const [old]=cur.fotos.splice(vIdx,1); closeViewer(); renderThumbs();
   try{ await dbPut(cur); await removeFoto(old); }catch(e){ toast(errMsg(e)); }
 };
@@ -1661,7 +1762,7 @@ async function cleanPhotos(list){
   list=list.filter(d=>d.fotos.length);
   if (!list.length) return toast('Os selecionados não têm fotos.');
   const n=list.reduce((a,d)=>a+d.fotos.length,0);
-  if (!confirm(`Apagar ${n} foto(s) de ${list.length} orçamento(s)? Os dados dos orçamentos ficam. Não dá para desfazer.`)) return;
+  if (!await ask(`Apagar ${n} foto(s) de ${list.length} orçamento(s)? \n\nOs dados dos orçamentos ficam. Não dá para desfazer.`)) return;
   busy(true,'A apagar fotos…'); let ok=0;
   try{
     for (const d of list){
@@ -1675,7 +1776,7 @@ async function cleanPhotos(list){
 async function cleanDocs(list){
   if (!list.length) return toast('Nada selecionado.');
   const pagos=list.filter(d=>status(d)==='pago').length;
-  if (!confirm(`Apagar ${list.length} orçamento(s) e as suas fotos?`+(pagos?`\n\nInclui ${pagos} pago(s).`:'')+'\n\nNão dá para desfazer. Se ainda não exportaste, cancela e usa "Exportar primeiro".')) return;
+  if (!await ask(`Apagar ${list.length} orçamento(s) e as suas fotos?`+(pagos?`\n\nInclui ${pagos} pago(s).`:'')+'\n\nNão dá para desfazer. Se ainda não exportaste, cancela e usa "Exportar primeiro".')) return;
   busy(true,'A apagar…'); let ok=0;
   for (const d of list){ try{ await dbDel(d.id); ok++; }catch(e){} }
   busy(false); toast(`${ok} de ${list.length} orçamento(s) apagado(s).`); renderSpace(); $('#btnCleanFind').click();
@@ -1764,7 +1865,7 @@ async function renderTestAdmin(){
     h('p',{style:'margin-top:0'}, modoTeste() ? '🧪 Estás em modo de teste.' : 'Estás a ver os dados reais.', h('br'), h('span',{class:'muted small'},`${n} orçamento(s) de teste guardados.`)),
     h('button',{class:modoTeste()?null:'primary',style:'width:100%',onclick:()=>setModoTeste(!modoTeste())}, modoTeste()?'↩︎ Voltar aos dados reais':'🧪 Entrar em modo de teste'),
     n ? h('button',{class:'danger',style:'width:100%;margin-top:8px',onclick:async()=>{
-      if (!confirm(`Apagar os ${n} orçamento(s) de teste e as suas fotos? Os dados reais não são tocados.`)) return;
+      if (!await ask(`Apagar os ${n} orçamento(s) de teste e as suas fotos? Os dados reais não são tocados.`)) return;
       busy(true,'A apagar dados de teste…'); let ok=0;
       for (const d of [...docsCache.values()].filter(x=>x.teste)){ try{ await dbDel(d.id); ok++; }catch(e){} }
       busy(false); toast(`${ok} orçamento(s) de teste apagado(s).`); renderTestAdmin(); if (modoTeste()) renderList();
@@ -1786,7 +1887,7 @@ function renderUsers(){
     const sel=h('select',{style:'max-width:140px'}, h('option',{value:'admin'},'Administrador'), h('option',{value:'utilizador'},'Utilizador'));
     sel.value=p.papel;
     sel.onchange=async()=>{
-      if (p.id===me.id && sel.value!=='admin' && !confirm('Vais deixar de ser administrador. Continuar?')){ sel.value=p.papel; return; }
+      if (p.id===me.id && sel.value!=='admin' && !await ask('Vais deixar de ser administrador. Continuar?')){ sel.value=p.papel; return; }
       const {error}=await sb.from('perfis').update({papel:sel.value}).eq('id',p.id);
       if (error){ toast(errMsg(error)); sel.value=p.papel; return; }
       p.papel=sel.value; if (p.id===me.id) me.papel=sel.value; toast('Perfil atualizado.'); fillSettings();
@@ -1797,9 +1898,10 @@ function renderUsers(){
       h('div',{class:'main'}, h('div',{class:'t'}, p.nome||p.email, ativo?null:h('span',{class:'chip st-naolido',style:'margin-left:6px'},'Desativado')), h('div',{class:'s'},p.email||'')),
       sel,
       h('div',{class:'row',style:'flex-basis:100%;margin-top:6px'},
-        h('button',{style:'font-size:13px;padding:7px',onclick:()=>{ const pw=prompt(`Nova password para ${p.nome||p.email} (mínimo 6 caracteres):`); if (pw) act({action:'password',id:p.id,password:pw},'Password alterada. Diz a nova password à pessoa.'); }},'🔑 Repor password'),
+        h('button',{style:'font-size:13px;padding:7px',onclick:async()=>{ const pw=await askText(`Nova password para ${p.nome||p.email}`,{placeholder:'Mínimo 6 caracteres'}); if (!pw) return;
+          await act({action:'password',id:p.id,password:pw},'Password alterada.'); sendAccess(p.nome, p.email, pw); }},'🔑 Repor password'),
         p.id===me.id ? null : ativo
-          ? h('button',{class:'danger',style:'font-size:13px;padding:7px',onclick:()=>{ if (confirm(`Desativar ${p.nome||p.email}? Deixa de conseguir entrar na app. O histórico fica.`)) act({action:'desativar',id:p.id},'Utilizador desativado.'); }},'🚫 Desativar')
+          ? h('button',{class:'danger',style:'font-size:13px;padding:7px',onclick:async()=>{ if (await ask(`Desativar ${p.nome||p.email}?\n\n Deixa de conseguir entrar na app. O histórico fica.`)) act({action:'desativar',id:p.id},'Utilizador desativado.'); }},'🚫 Desativar')
           : h('button',{style:'font-size:13px;padding:7px',onclick:()=>act({action:'reativar',id:p.id},'Utilizador reativado.')},'✅ Reativar'))));
   }
   // novo utilizador
@@ -1814,8 +1916,9 @@ function renderUsers(){
       try{
         const r=await callFn({action:'criar', nome:f.nome.value.trim(), email:f.email.value.trim(), password:f.pw.value});
         if (f.papel.value==='admin' && r.id) await sb.from('perfis').update({papel:'admin'}).eq('id',r.id);
-        await loadPerfis(); toast(`Utilizador criado. Envia à pessoa o email e a password inicial.`);
-        busy(false); renderUsers();
+        await loadPerfis(); busy(false); renderUsers();
+        toast('Utilizador criado.');
+        sendAccess(f.nome.value.trim(), f.email.value.trim(), f.pw.value);
       }catch(e){ busy(false); toast(errMsg(e)); }
     }},'Criar utilizador')));
 }
@@ -1887,7 +1990,8 @@ $('#cfgSave').onclick=()=>{
   setCfg({...getCfg(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked, email:$('#cfgEmail').value.trim()});
   toast('Definições guardadas.');
 };
-$('#btnLogout').onclick=async()=>{ if (!confirm('Terminar sessão?')) return; await flushSave(); await sb.auth.signOut(); };
+$('#btnMyPw').onclick=changeMyPassword;
+$('#btnLogout').onclick=async()=>{ if (!await ask('Terminar sessão?',{ok:'Terminar sessão',danger:false})) return; await flushSave(); await sb.auth.signOut(); };
 
 /* ---------- bloqueio da app: PIN e impressão digital ---------- */
 const b64e=buf=>btoa(String.fromCharCode(...new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer)));
@@ -1918,6 +2022,14 @@ function showLock(){
   if (l.cred) setTimeout(bioUnlock, 350);
 }
 function hideLock(){ locked=false; lockMode=null; $('#lock').hidden=true; }
+function markActive(){ try{ sessionStorage.setItem('ativoEm', String(Date.now())); }catch{} }
+setInterval(()=>{ if (me && !locked && !document.hidden) markActive(); }, 15000);
+function bootLock(){
+  const l=getLock(); if (!l) return;
+  const t=+(sessionStorage.getItem('ativoEm')||0);
+  if (Date.now()-t < Math.max((l.min||0)*60000, 60000)) { markActive(); return; }   // recarregou há pouco: não pede
+  showLock();
+}
 async function pinKey(k){
   if (k==='⌫'){ pinBuf=pinBuf.slice(0,-1); renderPin(); return; }
   if (k==='✓') return pinSubmit();
@@ -1929,7 +2041,7 @@ async function pinKey(k){
 async function pinSubmit(){
   const l=getLock();
   if (lockMode==='unlock'){
-    if (await pinHash(pinBuf, l.salt)===l.hash){ lockFails=0; hideLock(); return; }
+    if (await pinHash(pinBuf, l.salt)===l.hash){ lockFails=0; hideLock(); markActive(); return; }
     lockFails++; pinBuf=''; renderPin();
     if (lockFails>=5){ $('#lockErr').textContent='Demasiadas tentativas.'; return forgotPin(true); }
     $('#lockErr').textContent=`PIN errado. ${5-lockFails} tentativa(s) antes de teres de entrar com a password.`;
@@ -1943,12 +2055,12 @@ async function pinSubmit(){
     if (pinBuf!==pinFirst){ lockMode='set1'; lockUI('Escolhe um PIN (4 a 6 algarismos)', {cancel:true}); $('#lockErr').textContent='Os PIN não coincidem. Tenta outra vez.'; return; }
     const old=getLock(), salt=b64e(crypto.getRandomValues(new Uint8Array(16)));
     setLock({user:me.id, salt, hash:await pinHash(pinBuf, salt), len:pinBuf.length, cred:old?.cred||null, min:old?.min??5});
-    hideLock(); toast('PIN definido. A app passa a pedir o PIN.'); fillSettings();
+    hideLock(); markActive(); toast('PIN definido. A app passa a pedir o PIN.'); fillSettings();
   }
 }
 function startSetPin(){ lockMode='set1'; locked=false; lockUI('Escolhe um PIN (4 a 6 algarismos)', {cancel:true}); }
 async function forgotPin(force){
-  if (!force && !confirm('Para recuperar o acesso tens de entrar outra vez com o email e a password.\n\nTerminar sessão e desligar o PIN neste telemóvel?')) return;
+  if (!force && !await ask('Para recuperar o acesso tens de entrar outra vez com o email e a password.\n\nTerminar sessão e desligar o PIN neste telemóvel?')) return;
   setLock(null); hideLock(); toast('Entra com o email e a password.');
   await sb.auth.signOut();
 }
@@ -1974,7 +2086,7 @@ async function bioUnlock(){
   try{
     await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)), rpId:location.hostname,
       allowCredentials:[{type:'public-key', id:b64d(l.cred), transports:['internal','hybrid']}], userVerification:'required', timeout:60000}});
-    lockFails=0; hideLock();
+    lockFails=0; hideLock(); markActive();
   }catch(e){ /* cancelado ou falhou: fica o PIN */ }
 }
 $('#lockBio').onclick=bioUnlock;
@@ -1986,6 +2098,7 @@ document.addEventListener('visibilitychange',()=>{
   if (document.hidden){ hiddenAt = Date.now()-fileClickAt<4000 ? null : Date.now(); return; }
   const l=getLock();
   if (l && me && !locked && lockMode===null && hiddenAt && Date.now()-hiddenAt >= (l.min||0)*60000) showLock();
+  else if (me && !locked) markActive();
   hiddenAt=null;
 });
 async function renderLockSettings(){
@@ -2005,7 +2118,7 @@ async function renderLockSettings(){
       h('button',{onclick:startSetPin},'🔢 Mudar PIN'),
       l.cred ? h('button',{onclick:()=>{ const x=getLock(); x.cred=null; setLock(x); toast('Impressão digital desligada.'); fillSettings(); }},'Desligar digital')
              : h('button',{onclick:enableBio, disabled:!bioOk||null, title:bioOk?null:'Não disponível neste dispositivo'},'👆 Impressão digital')),
-    h('button',{class:'danger',style:'width:100%;margin-top:8px',onclick:()=>{ if (confirm('Desligar o bloqueio neste telemóvel?')){ setLock(null); fillSettings(); toast('Bloqueio desligado.'); } }},'Desligar bloqueio'));
+    h('button',{class:'danger',style:'width:100%;margin-top:8px',onclick:async()=>{ if (await ask('Desligar o bloqueio neste telemóvel?')){ setLock(null); fillSettings(); toast('Bloqueio desligado.'); } }},'Desligar bloqueio'));
 }
 
 /* ---------- arranque ---------- */
@@ -2020,7 +2133,7 @@ async function boot(session){
   try{
     await loadPerfis();
     me=perfisMap[session.user.id] || {id:session.user.id, email:session.user.email, nome:session.user.email, papel:'utilizador'};
-    showLock();
+    bootLock();
     await Promise.all([loadCars(), allDocs(true), loadPartilhas()]);
     renderTestBar();
   }catch(e){ toast('Erro a ligar à cloud: '+errMsg(e)); }
