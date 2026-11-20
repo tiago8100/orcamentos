@@ -97,7 +97,9 @@
       <label class="fld"><span>Chave da API (grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>)</span>
         <input id="cfgKey" type="password" autocomplete="off" placeholder="AIza…"></label>
       <label class="fld"><span><input type="checkbox" id="cfgShow" style="width:auto;vertical-align:middle"> Mostrar chave</span></label>
-      <label class="fld"><span>Modelo</span><input id="cfgModel" placeholder="gemini-flash-latest"></label>
+      <label class="fld"><span>Modelo</span><input id="cfgModel" list="models" placeholder="gemini-flash-latest"></label>
+      <datalist id="models"><option value="gemini-flash-latest"><option value="gemini-flash-lite-latest"></datalist>
+      <p class="muted" style="font-size:13px;margin-top:-4px">Mais rápido: <b>gemini-flash-lite-latest</b> (pode ler pior a letra manuscrita).</p>
       <label class="fld"><span>IVA por defeito (%)</span><input id="cfgIva" inputmode="decimal" placeholder="23"></label>
       <button class="primary" id="cfgSave">Guardar definições</button>
       <p class="muted" style="font-size:13px">A chave fica guardada só neste telemóvel. No plano gratuito, o Google pode usar as imagens enviadas para melhorar os seus produtos.</p>
@@ -114,6 +116,12 @@
       </div>
       <p class="muted" style="font-size:13px">Os dados ficam só neste telemóvel. Faz uma cópia de segurança de vez em quando.</p>
     </div>
+    <div class="card">
+      <h2>App</h2>
+      <p style="margin-top:0">Versão <b id="appVer"></b></p>
+      <button id="btnUpdate">🔄 Procurar atualização</button>
+      <p class="muted" style="font-size:13px">A app procura sozinha uma versão nova sempre que é aberta. Os teus orçamentos não são apagados.</p>
+    </div>
   </section>
 </main>
 
@@ -127,6 +135,7 @@
 
 <script>
 'use strict';
+const APP_VERSION='1.1';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -157,7 +166,13 @@ const plain = n => n==null ? '' : String(n).replace('.', ',');
 const money = n => n==null ? '—' : n.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
 const csvNum = n => n==null ? '' : r2(n).toFixed(2).replace('.', ',');
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'), 2600); }
-function busy(on, msg){ $('#busy').hidden=!on; if (msg) $('#busyMsg').textContent=msg; }
+function busy(on, msg){
+  $('#busy').hidden=!on; clearInterval(busy._t);
+  if (!on) return;
+  const t0=Date.now(), base=msg||'';
+  $('#busyMsg').textContent=base;
+  busy._t=setInterval(()=>{ $('#busyMsg').textContent=`${base} ${Math.round((Date.now()-t0)/1000)} s`; },1000);
+}
 const blobToDataURL = b => new Promise((ok,ko)=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=()=>ko(r.error); r.readAsDataURL(b); });
 async function dataURLToBlob(u){ return (await fetch(u)).blob(); }
 function fmtDate(d){ if(!d) return ''; const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(d); return m ? `${m[3]}/${m[2]}/${m[1]}` : d; }
@@ -195,10 +210,10 @@ async function prepImage(file){
   try{
     const img=new Image();
     await new Promise((ok,ko)=>{ img.onload=ok; img.onerror=ko; img.src=url; });
-    const max=2000, w=img.naturalWidth, hh=img.naturalHeight, sc=Math.min(1, max/Math.max(w,hh));
+    const max=1600, w=img.naturalWidth, hh=img.naturalHeight, sc=Math.min(1, max/Math.max(w,hh));
     const c=document.createElement('canvas'); c.width=Math.round(w*sc); c.height=Math.round(hh*sc);
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.8));
     return blob;
   } finally { URL.revokeObjectURL(url); }
 }
@@ -230,15 +245,19 @@ async function readSheet(blob){
   if (!cfg.key) throw new Error('Falta a chave da API do Gemini. Abre as Definições ⚙️.');
   const model=(cfg.model||'gemini-flash-latest').trim().replace(/^models\//,'');
   const b64=(await blobToDataURL(blob)).split(',')[1];
-  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json','x-goog-api-key':cfg.key},
-    body:JSON.stringify({
-      contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],
-      generationConfig:{temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA}
-    })
-  });
-  const j=await r.json().catch(()=>({}));
+  const call=async(fast)=>{
+    const gc={temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA};
+    if (fast) gc.thinkingConfig={thinkingBudget:0};   // sem "raciocínio": muito mais rápido
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':cfg.key},
+      body:JSON.stringify({contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc})
+    });
+    return {r, j: await r.json().catch(()=>({}))};
+  };
+  let {r,j}=await call(cfg.thinking!==true);
+  // alguns modelos não aceitam desligar o raciocínio: tenta de novo sem essa opção
+  if (!r.ok && r.status===400 && /thinking/i.test((j.error&&j.error.message)||'')) ({r,j}=await call(false));
   if (!r.ok){
     const m=(j.error&&j.error.message)||r.statusText;
     if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco.\n'+m);
@@ -519,7 +538,25 @@ $('#cfgSave').onclick=()=>{
 /* ---------- arranque ---------- */
 history.replaceState({v:'vList'},'','#lista');
 show('vList'); renderList();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+$('#appVer').textContent=APP_VERSION;
+if ('serviceWorker' in navigator){
+  const hadCtrl=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
+    reg.update().catch(()=>{});
+    document.addEventListener('visibilitychange',()=>{ if (!document.hidden) reg.update().catch(()=>{}); });
+  }).catch(()=>{});
+  // quando entra uma versão nova, recarrega uma vez para a usar logo
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{ if (hadCtrl && !window._reloaded){ window._reloaded=true; location.reload(); } });
+}
+$('#btnUpdate').onclick=async()=>{
+  busy(true,'A procurar atualização…');
+  try{
+    const reg=await navigator.serviceWorker?.getRegistration();
+    if (reg) await reg.update();
+    const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k)));
+  }catch(e){}
+  location.reload();
+};
 </script>
 </body>
 </html>
