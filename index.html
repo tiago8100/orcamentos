@@ -177,9 +177,16 @@
   <button id="btnCancelSel" class="icon" aria-label="Cancelar seleção" hidden>✕</button>
 </header>
 
+<div id="testBar" hidden style="position:sticky;top:54px;z-index:4;background:#7a4fb3;color:#fff;padding:8px 14px;display:flex;align-items:center;gap:10px;font-size:14px">
+  <span style="flex:1">🧪 <b>MODO TESTE</b> — estes dados não contam nos reais</span>
+  <button id="testExit" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.6);padding:5px 10px;font-size:13px">Sair</button>
+</div>
 <main>
   <section id="vList" hidden>
-    <input id="q" type="search" placeholder="🔎 Matrícula, oficina, mecânico, peça…" autocomplete="off">
+    <div class="row" style="margin-bottom:10px;flex-wrap:nowrap">
+      <input id="q" type="search" placeholder="🔎 Matrícula, oficina, mecânico, peça…" autocomplete="off" style="margin:0;flex:2">
+      <select id="ownFilt" style="flex:1;min-width:0"></select>
+    </div>
     <div class="chips" id="chips"></div>
     <div id="listBox"></div>
   </section>
@@ -193,6 +200,7 @@
       </form>
       <div id="lgErr" class="alert err" style="margin-top:10px" hidden></div>
       <p class="muted small">As contas são criadas pelo administrador.</p>
+      <p class="muted small" style="text-align:center;margin-bottom:0">© 2026 Tiago Ferreira</p>
     </div>
   </section>
   <section id="vEdit" hidden></section>
@@ -230,10 +238,19 @@
       <label class="fld"><span>Email habitual para envio (opcional, usado se a partilha não estiver disponível)</span><input id="cfgEmail" type="email" placeholder="ex.: contabilidade@empresa.pt"></label>
       <button id="bkExport" style="width:100%">💾 Cópia dos dados (JSON, sem fotos)</button>
     </div>
+    <div class="card">
+      <h2>Partilha</h2>
+      <p class="muted small" style="margin-top:0">Com quem partilhar os orçamentos novos que criares (podes mudar em cada orçamento).</p>
+      <div id="shareDefBox"></div>
+    </div>
+    <div class="card" id="adminTest" hidden>
+      <h2>Dados de teste</h2>
+      <div id="testBox"></div>
+    </div>
     <div class="card" id="adminUsers" hidden>
       <h2>Utilizadores</h2>
       <div id="usersBox"></div>
-      <p class="muted small">Para adicionar uma pessoa: Supabase → Authentication → Users → Add user (marca "Auto Confirm User"). Depois define aqui o perfil.</p>
+
     </div>
     <div class="card" id="adminClean" hidden>
       <h2>Espaço e limpeza</h2>
@@ -247,7 +264,7 @@
     </div>
     <div class="card">
       <h2>App</h2>
-      <p style="margin-top:0">Versão <b id="appVer"></b></p>
+      <p style="margin-top:0">Versão <b id="appVer"></b> · © 2026 Tiago Ferreira</p>
       <button id="btnUpdate">🔄 Procurar atualização</button>
       <p class="muted small">A app procura sozinha uma versão nova sempre que é aberta.</p>
     </div>
@@ -305,7 +322,7 @@
     <div class="grid2" id="exDates" hidden><label class="fld"><span>De</span><input type="date" id="exDe"></label><label class="fld"><span>Até</span><input type="date" id="exAte"></label></div>
     <div class="fld"><span>Estados</span><div class="chips" id="exEst"></div></div>
     <div class="grid2"><label class="fld"><span>Viatura</span><select id="exCar"></select></label><label class="fld"><span>Oficina</span><select id="exOf"></select></label></div>
-    <label class="fld"><span>Mecânico</span><select id="exMec"></select></label>
+    <div class="grid2"><label class="fld"><span>Mecânico</span><select id="exMec"></select></label><label class="fld" id="exUserL"><span>Criado por</span><select id="exUser"></select></label></div>
     <p id="exCount" class="muted" style="margin:4px 0 12px"></p>
     <div class="row"><button id="exDl" class="primary">⬇️ Descarregar</button><button id="exMail">📧 Partilhar / email</button></div>
     <p class="muted small">O Excel inclui um resumo, gráficos (por mês, peças vs mão de obra, por mecânico e por viatura) e tabelas com filtros e totais.</p>
@@ -317,7 +334,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.1.1';
+const APP_VERSION='3.2';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -385,12 +402,13 @@ function setCfg(c){ localStorage.setItem('cfg', JSON.stringify(c)); }
 
 /* ---------- base de dados (Supabase) ---------- */
 let docsCache=null;
-const META_KEYS=['_cloud','validado','estado','pagoEm','validadoEm','validadoPor','aprovadoEm','aprovadoPor','pagoPor','criado','criadoPor','atualizado','atualizadoPor'];
+const META_KEYS=['teste','partilhadoTodos','_sharePending','_cloud','validado','estado','pagoEm','validadoEm','validadoPor','aprovadoEm','aprovadoPor','pagoPor','criado','criadoPor','atualizado','atualizadoPor'];
 const NOT_DADOS=new Set(['id','fotos','data','matricula',...META_KEYS]);
 const ts=v=>v?Date.parse(v):null;
 const isoOrNull=v=>/^\d{4}-\d{2}-\d{2}$/.test(v||'')?v:null;
 function fromRow(r){
   return migrate({...(r.dados||{}), id:r.id, fotos:(r.fotos||[]).map(path=>({path})), data:r.data, matricula:r.matricula,
+    teste:!!r.teste, partilhadoTodos:!!r.partilhado_todos,
     validado:r.validado, estado:r.estado, pagoEm:r.pago_em, validadoEm:ts(r.validado_em), validadoPor:r.validado_por,
     aprovadoEm:ts(r.aprovado_em), aprovadoPor:r.aprovado_por, pagoPor:r.pago_registado_por,
     criado:ts(r.criado_em), criadoPor:r.criado_por, atualizado:ts(r.atualizado_em), atualizadoPor:r.atualizado_por, _cloud:true});
@@ -399,11 +417,13 @@ function dadosOf(d){ const o={}; for (const [k,v] of Object.entries(d)) if (!NOT
 function applyMeta(d,row){ const f=fromRow(row); for (const k of META_KEYS) d[k]=f[k]; docsCache?.set(d.id,d); }
 function errMsg(e){ return (e && (e.message||e.error_description)) || String(e); }
 async function allDocs(force){
-  if (docsCache && !force) return [...docsCache.values()];
-  const {data,error}=await sb.from('orcamentos').select('*');
-  if (error) throw error;
-  docsCache=new Map(data.map(r=>[r.id,fromRow(r)]));
-  return [...docsCache.values()];
+  if (!docsCache || force){
+    const {data,error}=await sb.from('orcamentos').select('*');
+    if (error) throw error;
+    docsCache=new Map(data.map(r=>[r.id,fromRow(r)]));
+  }
+  const t=modoTeste();
+  return [...docsCache.values()].filter(d=>!!d.teste===t);
 }
 async function dbGet(id){
   if (docsCache?.has(id)) return docsCache.get(id);
@@ -416,9 +436,12 @@ async function dbPut(d){
   const payload={dados:dadosOf(d), fotos:d.fotos.map(f=>f.path), data:isoOrNull(d.data), matricula:normPlate(d.matricula)||null};
   const res = d._cloud
     ? await sb.from('orcamentos').update(payload).eq('id',d.id).select().single()
-    : await sb.from('orcamentos').insert({id:d.id, ...payload}).select().single();
+    : await sb.from('orcamentos').insert({id:d.id, ...payload, teste:!!d.teste, partilhado_todos:!!d.partilhadoTodos}).select().single();
   if (res.error) throw res.error;
-  applyMeta(d,res.data); return d;
+  const wasNew=!d._cloud, pend=d._sharePending;
+  applyMeta(d,res.data);
+  if (wasNew){ d._sharePending=pend; await applyPendingShare(d); }
+  return d;
 }
 async function setStage(d,patch){
   const {data,error}=await sb.from('orcamentos').update(patch).eq('id',d.id).select().single();
@@ -438,7 +461,7 @@ function canDelete(d){
   if (!d) return false;
   if (!d._cloud) return true;
   const st=status(d);
-  if (isAdmin()) return st!=='pago';
+  if (isAdmin()) return st!=='pago' || d.teste;
   return d.criadoPor===me?.id && (st==='rever'||st==='naolido');
 }
 /* fotos no armazenamento privado "fotos" */
@@ -756,7 +779,7 @@ document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go({v:b.datase
 function openDoc(d){ cur=migrate(d); return go({v:'vEdit', id:d.id}); }
 
 /* ---------- lista ---------- */
-let q='', filt='todos';
+let q='', filt='todos', own='';
 const FILTS=[['todos','Todos'],['rever','A validar'],['validado','Validados'],['aprovado','Aprovados'],['pago','Pagos']];
 function matchQ(d){
   if (!q) return true;
@@ -764,6 +787,19 @@ function matchQ(d){
   const flat=hay.replace(/-/g,'');
   return q.toLowerCase().split(/\s+/).every(t=>hay.includes(t)||flat.includes(t.replace(/-/g,'')));
 }
+function matchOwn(d){
+  if (!own) return true;
+  if (own==='meus') return isMine(d);
+  if (own==='comigo') return !isMine(d);
+  return d.criadoPor===own;
+}
+function renderOwnFilt(){
+  const sel=$('#ownFilt');
+  const opts=[['','Todos'],['meus','Criados por mim'],['comigo','Partilhados comigo']];
+  if (isAdmin()) for (const p of activeUsers()) if (p.id!==me.id) opts.push([p.id,'Criados por '+(p.nome||p.email)]);
+  sel.replaceChildren(...opts.map(([v,t])=>h('option',{value:v},t))); sel.value=own;
+}
+$('#ownFilt').onchange=e=>{ own=e.target.value; renderList(); };
 function matchF(d){
   switch(filt){
     case 'todos': return true;
@@ -778,7 +814,8 @@ async function renderList(){
   $('#chips').replaceChildren(...FILTS.map(([k,l])=>h('button',{class:'chip-btn'+(filt===k?' on':''),onclick:()=>{ filt=k; renderList(); }},l)));
   const box=$('#listBox'); box.replaceChildren();
   if (!docs.length){ box.append(h('div',{class:'card muted'},'Ainda não tens orçamentos. Usa 📷 Foto, 🖼️ Galeria ou ✍️ Manual.')); return; }
-  const list=docs.filter(d=>matchQ(d)&&matchF(d));
+  renderOwnFilt();
+  const list=docs.filter(d=>matchQ(d)&&matchF(d)&&matchOwn(d));
   if (!list.length){ box.append(h('p',{class:'muted'},'Nenhum orçamento encontrado.')); return; }
   const byMonth=groupBy(list,d=>docDate(d).slice(0,7));
   for (const [ym,g] of byMonth){
@@ -792,7 +829,7 @@ async function renderList(){
         h('div',{class:'main'},
           h('div',{class:'t'},[d.matricula,[d.marca,d.modelo].filter(Boolean).join(' ')].filter(Boolean).join(' · ')||'Sem matrícula'),
           h('div',{class:'s'},[fmtDate(docDate(d)),d.oficina].filter(Boolean).join(' · ')),
-          h('div',{class:'chips'}, chip(STATUS[st],'st-'+st), d.manual?chip('✍️ Manual'):null)),
+          h('div',{class:'chips'}, chip(STATUS[st],'st-'+st), isMine(d) ? chip(d.partilhadoTodos||sharedIds(d).length?'👥':'🔒') : chip('👤 '+nomeDe(d.criadoPor)), d.manual?chip('✍️ Manual'):null)),
         h('div',{class:'v'},money(calc(d).total)));
       attachPress(li,d);
       ul.append(li);
@@ -828,7 +865,7 @@ $('#btnDel').onclick=async()=>{
   exitSelect();
 };
 $('#q').addEventListener('input',e=>{ q=e.target.value.trim(); renderList(); });
-$('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); try{ await Promise.all([allDocs(true), loadCars(), loadPerfis()]); }catch(e){ toast(errMsg(e)); } busy(false); renderList(); };
+$('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); try{ await Promise.all([allDocs(true), loadCars(), loadPerfis(), loadPartilhas()]); }catch(e){ toast(errMsg(e)); } busy(false); renderList(); };
 
 /* ---------- novos orçamentos ---------- */
 async function newFromPhoto(file){
@@ -838,7 +875,8 @@ async function newFromPhoto(file){
   busy(false);
   if (getCfg().crop!==false){ blob=await editPhoto(blob); if (!blob) return; }
   const now=Date.now(), id=uid();
-  const d={id, criado:now, atualizado:now, fotos:[], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null};
+  const d={id, criado:now, atualizado:now, fotos:[], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null, teste:modoTeste()};
+  defaultShare(d);
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
   // a foto sobe para a cloud ao mesmo tempo que o Gemini lê
@@ -859,7 +897,8 @@ for (const id of ['inCam','inGal']){
 $('#btnManual').onclick=async()=>{
   const now=Date.now();
   const d={id:uid(), criado:now, atualizado:now, fotos:[], manual:true, data:todayISO(), estado:'orcamento',
-    pecas:[{descricao:'',quantidade:1,valor:null,riscado:false}], iva_pct:parseNum(getCfg().iva)??23, erro:null};
+    pecas:[{descricao:'',quantidade:1,valor:null,riscado:false}], iva_pct:parseNum(getCfg().iva)??23, erro:null, teste:modoTeste()};
+  defaultShare(d);
   openDoc(d);   // só fica gravado quando preencheres alguma coisa
 };
 
@@ -869,7 +908,7 @@ function changed(){ renderSummary(); $('#saved').textContent='…'; clearTimeout
 async function save(){
   saveT=null; if (!cur) return;
   if (cur.viaturaConfirmada) rememberCar(cur);
-  if (isLocked(cur)) return;
+  if (isLocked(cur) || !canEdit(cur)) return;
   try{ await dbPut(cur); }
   catch(e){ if (view==='vEdit') $('#saved').textContent='⚠️ Não guardado'; toast('Não foi possível guardar: '+errMsg(e)); return; }
   if (view==='vEdit'){ $('#saved').textContent='Guardado'; $('#title').textContent=cur.matricula||'Orçamento'; renderDupes(); show('vEdit'); }
@@ -898,6 +937,7 @@ function renderEdit(){
   if (cur.notas_leitura) v.append(h('div',{class:'alert info'}, '🔎 '+cur.notas_leitura));
   if (cur.viaturaDaMemoria) v.append(h('div',{class:'alert info'}, '🚗 Marca e modelo preenchidos a partir de leituras anteriores desta matrícula.'));
   if (cur.matricula && !plateOk(cur.matricula)) v.append(h('div',{class:'alert warn'}, `⚠️ A matrícula "${cur.matricula}" não tem um formato português válido (ex.: 85-40-UQ). Confirma-a.`));
+  if (!isLocked(cur) && !canEdit(cur)) v.append(h('div',{class:'alert info'}, `👁️ Partilhado contigo por ${nomeDe(cur.criadoPor)} — só de leitura.`));
   if (isLocked(cur)) v.append(h('div',{class:'alert info'}, status(cur)==='pago' ? '🔒 Orçamento pago e finalizado — só de leitura.' : (isAdmin() ? '🔒 Valores bloqueados. Para alterar, usa ↩︎ Reabrir.' : '🔒 Valores bloqueados. Só um administrador pode reabrir.')));
 
   const recalcMO=()=>{ const a=parseNum(cur.mo_horas), b=parseNum(cur.mo_preco_hora); if (a!=null&&b!=null){ cur.mo_total=r2(a*b); $('#moTotal').value=plain(cur.mo_total); } };
@@ -912,6 +952,7 @@ function renderEdit(){
         h('label',{class:'btn'},'🖼️ Galeria', h('input',{type:'file',accept:'image/*',hidden:true,onchange:addPhotoInput}))),
       cur.diag ? h('p',{class:'muted small',style:'margin:8px 0 0'},
         `⏱ ${plain(cur.diag.segundos)} s · ${cur.diag.leituras||1} leitura(s) · ${cur.diag.verificado||''} · ${cur.diag.modelo}`) : null),
+    card('Partilha', h('div',{id:'shareBox'})),
     card('Viatura',
       h('div',{class:'grid2'}, field('Matrícula','matricula',{ph:'00-AA-00'}), field('Kms','kms',{im:'numeric'})),
       h('div',{class:'grid2'}, field('Marca','marca'), field('Modelo','modelo')),
@@ -936,10 +977,10 @@ function renderEdit(){
       h('button',{class:'danger del-only',onclick:delCur},'🗑️ Apagar')),
     h('details',{class:'card fold',style:'margin-top:12px',ontoggle:e=>{ if (e.target.open) renderHist(); }}, h('summary',{},'Histórico'), h('div',{id:'histBox',class:'small'},'A carregar…'))
   );
-  renderVal(); renderThumbs(); renderPecas(); renderSummary(); renderDupes(); applyLock();
+  renderVal(); renderThumbs(); renderPecas(); renderSummary(); renderDupes(); renderShareCard(); applyLock();
 }
 function applyLock(){
-  const locked=isLocked(cur);
+  const locked=isLocked(cur) || !canEdit(cur);
   document.querySelectorAll('#vEdit .card:not(#valCard) input, #vEdit .card:not(#valCard) textarea').forEach(e=>e.disabled=locked);
   document.querySelectorAll('#vEdit .edit-only').forEach(e=>e.hidden=locked);
   document.querySelectorAll('#vEdit .del-only').forEach(e=>e.hidden=!canDelete(cur));
@@ -962,7 +1003,9 @@ function renderVal(){
   b.append(h('div',{class:'steps'}, ...['A validar','Validado','Aprovado','Pago'].map((l,k)=>
     h('div',{class:'step'+(k<i||(k===3&&i===3)?' done':k===i?' now':'')}, h('span',{class:'dot'},k<i||(k===3&&i===3)?'✓':String(k+1)), h('span',{},l)))));
   const adm=isAdmin();
-  if (i===0) b.append(h('div',{class:'valrow'}, h('span',{},'Revê os valores e confirma.'), h('button',{class:'primary',onclick:validar},'✓ Validar')));
+  if (i===0) b.append(canEdit(cur) ? h('div',{class:'valrow'}, h('span',{},'Revê os valores e confirma.'), h('button',{class:'primary',onclick:validar},'✓ Validar'))
+    : h('div',{class:'small muted'}, `⏳ Aguarda validação por ${nomeDe(cur.criadoPor)}.`));
+  if (!isMine(cur)) b.append(h('div',{class:'small muted',style:'margin-top:6px'}, `👤 Criado por ${nomeDe(cur.criadoPor)}`));
   if (i===1) b.append(h('div',{class:'valrow'}, h('span',{class:'small muted'},`Validado por ${nomeDe(cur.validadoPor)} em ${dt(cur.validadoEm)}.`),
     adm ? h('button',{class:'primary',onclick:aprovar},'👍 Aprovar') : h('span',{class:'small'},'⏳ Aguarda aprovação')));
   if (i===2 && !adm) b.append(h('div',{class:'small muted'}, `Aprovado por ${nomeDe(cur.aprovadoPor)} em ${dt(cur.aprovadoEm)||'—'}. ⏳ Aguarda pagamento.`));
@@ -1270,8 +1313,18 @@ async function renderStats(){
   }
   v.append(card(!y ? 'Por ano' : !m ? 'Por mês' : 'Por dia', box));
 
+  const drill = !m ? (it=>go(!y ? {v:'vStats',y:it.key} : {v:'vStats',y,m:it.key})) : null;
+  const gItems=[...groups].reverse().map(([k,g])=>{ const x=agg(g); return {key:k, label: !y ? k : !m ? MESES[+k-1].slice(0,3) : k.slice(8,10), values:[x.pecas+x.mo+x.iva], parts:[x.pecas,x.mo]}; });
+  v.append(card(!y ? 'Total c/ IVA por ano' : !m ? 'Total c/ IVA por mês' : 'Total c/ IVA por dia', barChart(gItems,{onClick:drill})),
+    card('Peças e mão de obra (s/ IVA)', barChart(gItems.map(it=>({...it, values:it.parts})),{stacked:true, names:['Peças','Mão de obra'], onClick:drill})));
+  const mecTop=[...groupBy(sel,d=>(d.assinatura||'—').trim())].map(([k,g])=>({label:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
+  const carTop=[...groupBy(sel.filter(d=>plateOk(normPlate(d.matricula))),d=>normPlate(d.matricula))].map(([k,g])=>({label:k, key:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
+  const ofTop=[...groupBy(sel,d=>(d.oficina||'—').trim())].map(([k,g])=>({label:k, values:[agg(g).total]})).sort((a,b)=>b.values[0]-a.values[0]).slice(0,10);
+  v.append(card('Por mecânico', barChart(mecTop,{horizontal:true, colors:['#1D7A46']})),
+    card('Por viatura'+(carTop.length>=10?' (top 10)':''), barChart(carTop,{horizontal:true, colors:['#7A4FB3'], onClick:it=>go({v:'vCar',plate:it.key})})),
+    card('Por oficina'+(ofTop.length>=10?' (top 10)':''), barChart(ofTop,{horizontal:true, colors:['#B36B2F']})));
   const mec=[...groupBy(sel,d=>(d.assinatura||'—').trim())].map(([k,g])=>[k,agg(g)]).sort((a,b)=>b[1].total-a[1].total);
-  v.append(card('Por mecânico', table(['Mecânico','Orç.','Horas','M. obra','Total'], mec.map(([k,x])=>[k,x.n,plain(x.horas),money(x.mo),money(x.total)]))));
+  v.append(card('Mecânicos — detalhe', table(['Mecânico','Orç.','Horas','M. obra','Total'], mec.map(([k,x])=>[k,x.n,plain(x.horas),money(x.mo),money(x.total)]))));
 
   const pm=new Map();
   for (const d of sel) for (const p of d.pecas){
@@ -1283,12 +1336,11 @@ async function renderStats(){
   if (top.length) v.append(card('Peças (top 15 por valor)', table(['Peça','Vezes','Qtd','Valor'], top.map(e=>[e.nome,e.vezes,plain(r2(e.qtd)),money(r2(e.valor))]))));
 
   const cars=[...groupBy(sel.filter(d=>plateOk(normPlate(d.matricula))),d=>normPlate(d.matricula))].map(([k,g])=>[k,g,agg(g)]).sort((a,b)=>b[2].total-a[2].total);
-  if (cars.length) v.append(card('Por viatura', ...cars.map(([k,g,x])=>h('div',{class:'grow',onclick:()=>go({v:'vCar',plate:k})},
+  if (cars.length) v.append(card('Viaturas — detalhe', ...cars.map(([k,g,x])=>h('div',{class:'grow',onclick:()=>go({v:'vCar',plate:k})},
     h('div',{class:'main'}, h('div',{class:'t'},k+' ›'), h('div',{class:'s'},[[g[0].marca,g[0].modelo].filter(Boolean).join(' '),`${x.n} orç.`].filter(Boolean).join(' · '))),
     h('div',{class:'v'},money(x.total))))));
 
-  const ofs=[...groupBy(sel,d=>(d.oficina||'—').trim())].map(([k,g])=>[k,agg(g)]).sort((a,b)=>b[1].total-a[1].total);
-  v.append(card('Por oficina', table(['Oficina','Orç.','Total'], ofs.map(([k,x])=>[k,x.n,money(x.total)]))));
+
 }
 
 /* ---------- exportar para Excel (ExcelJS + gráficos) ---------- */
@@ -1404,10 +1456,10 @@ async function buildXlsx(docs, desc={}){
     {h:'Oficina',k:'of',w:28},{h:'NIPC',k:'nipc',w:12},{h:'Mecânico',k:'mec',w:14},{h:'Estado',k:'est',w:11},{h:'Pago em',k:'pago',w:11,f:D},
     {h:'Peças',k:'pecas',w:11,f:E},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total s/ IVA',k:'base',w:12,f:E},{h:'IVA',k:'iva',w:10,f:E},
     {h:'Total c/ IVA',k:'total',w:12,f:E},{h:'Material escrito',k:'me',w:12,f:E},{h:'Total escrito',k:'te',w:12,f:E},{h:'Avisos',k:'av',w:40},
-    {h:'Validado por',k:'vp',w:16},{h:'Aprovado por',k:'ap',w:16},{h:'Pagamento registado por',k:'pp',w:16}],
+    {h:'Criado por',k:'cp',w:16},{h:'Validado por',k:'vp',w:16},{h:'Aprovado por',k:'ap',w:16},{h:'Pagamento registado por',k:'pp',w:16}],
     docs.map(d=>{ const c=calc(d); return {data:utcDate(docDate(d)), mat:d.matricula||'', marca:d.marca||'', modelo:d.modelo||'', kms:d.kms||'', of:d.oficina||'', nipc:d.nipc||'',
       mec:d.assinatura||'', est:STATUS_TXT[status(d)], pago:d.estado==='pago'&&isoOrNull(d.pagoEm)?utcDate(d.pagoEm):null, pecas:c.material, horas:parseNum(d.mo_horas), mo:c.mo, base:c.base, iva:c.iva, total:c.total,
-      me:d.material_escrito??null, te:d.total_escrito??null, av:c.avisos.join(' '), vp:d.validadoPor?nomeDe(d.validadoPor):'', ap:d.aprovadoPor?nomeDe(d.aprovadoPor):'', pp:d.pagoPor?nomeDe(d.pagoPor):''}; }),
+      me:d.material_escrito??null, te:d.total_escrito??null, av:c.avisos.join(' '), cp:d.criadoPor?nomeDe(d.criadoPor):'', vp:d.validadoPor?nomeDe(d.validadoPor):'', ap:d.aprovadoPor?nomeDe(d.aprovadoPor):'', pp:d.pagoPor?nomeDe(d.pagoPor):''}; }),
     {totals:['pecas','horas','mo','base','iva','total'], fills:(row,i)=>{ row.getCell(9).fill={type:'pattern',pattern:'solid',fgColor:{argb:STATUS_FILL[status(docs[i])]}}; }});
   // Peças
   const pec=[]; for (const d of docs) for (const p of d.pecas) pec.push({data:utcDate(docDate(d)), mat:d.matricula||'', of:d.oficina||'', peca:p.descricao||'', qtd:p.quantidade??null, valor:p.riscado?null:(p.valor??null), exc:p.riscado?'Sim':'', vexc:p.riscado?(p.valor??null):null});
@@ -1514,10 +1566,12 @@ function exRange(){
   return ['0000-01-01','9999-12-31','todos os períodos'];
 }
 async function exFiltered(){
-  const [de,ate,periodo]=exRange(), car=$('#exCar').value, of=$('#exOf').value, mec=$('#exMec').value;
+  const [de,ate,periodo]=exRange(), car=$('#exCar').value, of=$('#exOf').value, mec=$('#exMec').value, usr=isAdmin()?$('#exUser').value:'';
   const list=(await allDocs()).filter(d=>{ const dd=docDate(d), st=status(d)==='naolido'?'rever':status(d);
-    return dd>=de && dd<=ate && exSel.has(st) && (!car||normPlate(d.matricula)===car) && (!of||(d.oficina||'').trim()===of) && (!mec||(d.assinatura||'').trim()===mec); });
+    return dd>=de && dd<=ate && exSel.has(st) && (!car||normPlate(d.matricula)===car) && (!of||(d.oficina||'').trim()===of) && (!mec||(d.assinatura||'').trim()===mec) && (!usr||d.criadoPor===usr); });
   const filtros=[['Período',periodo],['Estados',EX_ST.filter(([k])=>exSel.has(k)).map(x=>x[1]).join(', ')]];
+  if (usr) filtros.push(['Criado por',nomeDe(usr)]);
+  if (modoTeste()) filtros.unshift(['Dados','🧪 TESTE']);
   if (car) filtros.push(['Viatura',car]); if (of) filtros.push(['Oficina',of]); if (mec) filtros.push(['Mecânico',mec]);
   const fname=`orcamentos-${slug(periodo.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''))||'export'}${car?'-'+slug(car):''}.xlsx`;
   return {list, desc:{periodo, filtros}, fname};
@@ -1533,6 +1587,8 @@ async function openExport(preset={}){
   opts('#exCar', docs.map(d=>plateOk(normPlate(d.matricula))?normPlate(d.matricula):null), 'Todas as viaturas');
   opts('#exOf', docs.map(d=>(d.oficina||'').trim()), 'Todas as oficinas');
   opts('#exMec', docs.map(d=>(d.assinatura||'').trim()), 'Todos os mecânicos');
+  $('#exUserL').hidden=!isAdmin();
+  $('#exUser').replaceChildren(h('option',{value:''},'Todos'), ...activeUsers().map(p=>h('option',{value:p.id},p.nome||p.email)));
   $('#exPer').value=preset.de?'custom':'tudo'; $('#exDe').value=preset.de||''; $('#exAte').value=preset.ate||''; $('#exDates').hidden=!preset.de;
   if (preset.car) $('#exCar').value=preset.car;
   exSel=new Set(['rever','validado','aprovado','pago']); renderExSt();
@@ -1540,7 +1596,7 @@ async function openExport(preset={}){
 }
 function renderExSt(){ $('#exEst').replaceChildren(...EX_ST.map(([k,l])=>h('button',{type:'button',class:'chip-btn'+(exSel.has(k)?' on':''),onclick:()=>{ exSel.has(k)?exSel.delete(k):exSel.add(k); renderExSt(); exCount(); }},l))); }
 $('#exPer').onchange=()=>{ $('#exDates').hidden=$('#exPer').value!=='custom'; exCount(); };
-for (const id of ['#exDe','#exAte','#exCar','#exOf','#exMec']) $(id).onchange=exCount;
+for (const id of ['#exDe','#exAte','#exCar','#exOf','#exMec','#exUser']) $(id).onchange=exCount;
 $('#exClose').onclick=()=>{ $('#expModal').hidden=true; };
 $('#exDl').onclick=async()=>{ const {list,desc,fname}=await exFiltered(); exportXlsx(list,fname,desc); };
 $('#exMail').onclick=async e=>{ const btn=e.currentTarget; const {list,desc,fname}=await exFiltered(); shareXlsx(list,fname,desc,btn); };
@@ -1558,20 +1614,6 @@ async function loadPerfis(){
   const {data}=await sb.from('perfis').select('*');
   perfisMap=Object.fromEntries((data||[]).map(p=>[p.id,p]));
   if (me && perfisMap[me.id]) me=perfisMap[me.id];
-}
-function renderUsers(){
-  const box=$('#usersBox'); box.replaceChildren();
-  for (const p of Object.values(perfisMap).sort((a,b)=>(a.nome||'').localeCompare(b.nome||''))){
-    const sel=h('select',{style:'max-width:150px'}, h('option',{value:'admin'},'Administrador'), h('option',{value:'utilizador'},'Utilizador'));
-    sel.value=p.papel;
-    sel.onchange=async()=>{
-      if (p.id===me.id && sel.value!=='admin' && !confirm('Vais deixar de ser administrador. Continuar?')){ sel.value=p.papel; return; }
-      const {error}=await sb.from('perfis').update({papel:sel.value}).eq('id',p.id);
-      if (error){ toast(errMsg(error)); sel.value=p.papel; return; }
-      p.papel=sel.value; if (p.id===me.id) me.papel=sel.value; toast('Perfil atualizado.'); fillSettings();
-    };
-    box.append(h('div',{class:'grow',style:'cursor:default'}, h('div',{class:'main'}, h('div',{class:'t'},p.nome||p.email), h('div',{class:'s'},p.email||'')), sel));
-  }
 }
 const mb=b=>(b/1048576).toLocaleString('pt-PT',{maximumFractionDigits:1})+' MB';
 async function renderSpace(){
@@ -1639,6 +1681,196 @@ async function cleanDocs(list){
   busy(false); toast(`${ok} de ${list.length} orçamento(s) apagado(s).`); renderSpace(); $('#btnCleanFind').click();
 }
 
+/* ---------- partilhas, modo de teste e utilizadores (v3.2) ---------- */
+let partilhasMap=new Map();   // orçamento -> Set(utilizadores)
+async function loadPartilhas(){
+  const {data}=await sb.from('partilhas').select('*');
+  partilhasMap=new Map();
+  for (const r of data||[]){ if (!partilhasMap.has(r.orcamento_id)) partilhasMap.set(r.orcamento_id,new Set()); partilhasMap.get(r.orcamento_id).add(r.utilizador_id); }
+}
+const sharedIds=d=>[...(partilhasMap.get(d.id)||d._sharePending||[])];
+const isMine=d=>!d._cloud || d.criadoPor===me?.id;
+const canEdit=d=>!!d && (isMine(d) || isAdmin());
+const activeUsers=()=>Object.values(perfisMap).filter(p=>p.ativo!==false).sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
+function shareLabel(d){
+  if (d.partilhadoTodos) return '👥 Todos';
+  const ids=sharedIds(d);
+  return ids.length ? '👥 '+ids.map(nomeDe).join(', ') : '🔒 Só eu';
+}
+/* aplica a partilha: no orçamento ainda não gravado fica pendente até ser criado */
+async function setShare(d, todos, ids){
+  ids=[...new Set(ids)].filter(id=>id!==d.criadoPor && id!==me.id);
+  if (!d._cloud){ d.partilhadoTodos=todos; d._sharePending=ids; return; }
+  const up=await sb.from('orcamentos').update({partilhado_todos:todos}).eq('id',d.id).select().single();
+  if (up.error) throw up.error;
+  applyMeta(d, up.data);
+  const cur0=new Set(partilhasMap.get(d.id)||[]), add=ids.filter(x=>!cur0.has(x)), del=[...cur0].filter(x=>!ids.includes(x));
+  if (add.length){ const r=await sb.from('partilhas').insert(add.map(u=>({orcamento_id:d.id, utilizador_id:u}))); if (r.error) throw r.error; }
+  for (const u of del){ const r=await sb.from('partilhas').delete().eq('orcamento_id',d.id).eq('utilizador_id',u); if (r.error) throw r.error; }
+  partilhasMap.set(d.id, new Set(ids));
+}
+async function applyPendingShare(d){
+  const ids=d._sharePending; delete d._sharePending;
+  if (ids && ids.length){ await sb.from('partilhas').insert(ids.map(u=>({orcamento_id:d.id, utilizador_id:u}))); partilhasMap.set(d.id,new Set(ids)); }
+}
+function defaultShare(d){
+  const p=getCfg().partilha||{modo:'privado',ids:[]};
+  d.partilhadoTodos = p.modo==='todos';
+  d._sharePending = p.modo==='pessoas' ? (p.ids||[]).filter(id=>perfisMap[id]?.ativo!==false) : [];
+}
+/* editor de partilha (no orçamento e nas definições) */
+function shareEditor(state, onChange){
+  const box=h('div',{});
+  const draw=()=>{
+    box.replaceChildren(...[
+      h('div',{class:'seg',style:'margin-bottom:8px'}, ...[['privado','🔒 Só eu'],['todos','👥 Todos'],['pessoas','👤 Escolher']].map(([k,l])=>
+        h('button',{type:'button',class:state.modo===k?'on':null,onclick:()=>{ state.modo=k; draw(); onChange(state); }},l))),
+      state.modo==='pessoas' ? h('div',{}, ...activeUsers().filter(p=>p.id!==me.id && p.id!==state.dono).map(p=>{
+        const cb=h('input',{type:'checkbox',checked:state.ids.includes(p.id),style:'width:auto'});
+        cb.onchange=()=>{ state.ids = cb.checked ? [...state.ids,p.id] : state.ids.filter(x=>x!==p.id); onChange(state); };
+        return h('label',{class:'grow',style:'cursor:pointer'}, cb, h('div',{class:'main'}, h('div',{class:'t'},p.nome||p.email), h('div',{class:'s'},p.email||'')));
+      })) : null,
+      state.modo==='pessoas' && activeUsers().filter(p=>p.id!==me.id && p.id!==state.dono).length===0 ? h('p',{class:'muted small'},'Ainda não há outros utilizadores.') : null].filter(Boolean));
+  };
+  draw(); return box;
+}
+function renderShareCard(){
+  const box=$('#shareBox'); if (!box || !cur) return; box.replaceChildren();
+  if (!isMine(cur) && !isAdmin()){
+    box.append(h('p',{style:'margin:0'}, `Criado por ${nomeDe(cur.criadoPor)} · ${shareLabel(cur)}`)); return;
+  }
+  const state={modo: cur.partilhadoTodos?'todos':(sharedIds(cur).length?'pessoas':'privado'), ids:sharedIds(cur), dono:cur.criadoPor};
+  let t=null;
+  box.append(...[
+    !isMine(cur) ? h('p',{class:'small muted',style:'margin-top:0'},`Criado por ${nomeDe(cur.criadoPor)}.`) : null,
+    shareEditor(state, st=>{ clearTimeout(t); t=setTimeout(async()=>{
+      try{ await setShare(cur, st.modo==='todos', st.modo==='pessoas'?st.ids:[]); toast('Partilha atualizada.'); }catch(e){ toast(errMsg(e)); }
+    }, 400); })].filter(Boolean));
+}
+
+/* modo de teste (só administradores) */
+const modoTeste=()=>isAdmin() && getCfg().teste===true;
+function renderTestBar(){ $('#testBar').hidden=!modoTeste(); }
+async function setModoTeste(on){
+  setCfg({...getCfg(), teste:!!on}); renderTestBar();
+  toast(on ? '🧪 Modo de teste: o que criares agora não conta nos dados reais.' : 'De volta aos dados reais.');
+  await allDocs(true); route({v:view==='vSettings'?'vSettings':'vList'});
+}
+$('#testExit').onclick=()=>setModoTeste(false);
+async function renderTestAdmin(){
+  const box=$('#testBox'); box.replaceChildren();
+  const n=[...(docsCache?.values()||[])].filter(d=>d.teste).length;
+  box.append(...[
+    h('p',{style:'margin-top:0'}, modoTeste() ? '🧪 Estás em modo de teste.' : 'Estás a ver os dados reais.', h('br'), h('span',{class:'muted small'},`${n} orçamento(s) de teste guardados.`)),
+    h('button',{class:modoTeste()?null:'primary',style:'width:100%',onclick:()=>setModoTeste(!modoTeste())}, modoTeste()?'↩︎ Voltar aos dados reais':'🧪 Entrar em modo de teste'),
+    n ? h('button',{class:'danger',style:'width:100%;margin-top:8px',onclick:async()=>{
+      if (!confirm(`Apagar os ${n} orçamento(s) de teste e as suas fotos? Os dados reais não são tocados.`)) return;
+      busy(true,'A apagar dados de teste…'); let ok=0;
+      for (const d of [...docsCache.values()].filter(x=>x.teste)){ try{ await dbDel(d.id); ok++; }catch(e){} }
+      busy(false); toast(`${ok} orçamento(s) de teste apagado(s).`); renderTestAdmin(); if (modoTeste()) renderList();
+    }},'🗑️ Apagar todos os dados de teste') : null].filter(Boolean));
+}
+
+/* gestão de utilizadores pelo servidor */
+async function callFn(body){
+  const {data:{session}}=await sb.auth.getSession();
+  const r=await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY}, body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error((j.error&&j.error.message) || `Erro ${r.status}`);
+  return j;
+}
+function renderUsers(){
+  const box=$('#usersBox'); box.replaceChildren();
+  for (const p of Object.values(perfisMap).sort((a,b)=>(a.nome||'').localeCompare(b.nome||''))){
+    const sel=h('select',{style:'max-width:140px'}, h('option',{value:'admin'},'Administrador'), h('option',{value:'utilizador'},'Utilizador'));
+    sel.value=p.papel;
+    sel.onchange=async()=>{
+      if (p.id===me.id && sel.value!=='admin' && !confirm('Vais deixar de ser administrador. Continuar?')){ sel.value=p.papel; return; }
+      const {error}=await sb.from('perfis').update({papel:sel.value}).eq('id',p.id);
+      if (error){ toast(errMsg(error)); sel.value=p.papel; return; }
+      p.papel=sel.value; if (p.id===me.id) me.papel=sel.value; toast('Perfil atualizado.'); fillSettings();
+    };
+    const ativo=p.ativo!==false;
+    const act=async(body,msg)=>{ busy(true,'A gravar…'); try{ await callFn(body); await loadPerfis(); toast(msg); }catch(e){ toast(errMsg(e)); } busy(false); renderUsers(); };
+    box.append(h('div',{class:'grow',style:'cursor:default;flex-wrap:wrap'},
+      h('div',{class:'main'}, h('div',{class:'t'}, p.nome||p.email, ativo?null:h('span',{class:'chip st-naolido',style:'margin-left:6px'},'Desativado')), h('div',{class:'s'},p.email||'')),
+      sel,
+      h('div',{class:'row',style:'flex-basis:100%;margin-top:6px'},
+        h('button',{style:'font-size:13px;padding:7px',onclick:()=>{ const pw=prompt(`Nova password para ${p.nome||p.email} (mínimo 6 caracteres):`); if (pw) act({action:'password',id:p.id,password:pw},'Password alterada. Diz a nova password à pessoa.'); }},'🔑 Repor password'),
+        p.id===me.id ? null : ativo
+          ? h('button',{class:'danger',style:'font-size:13px;padding:7px',onclick:()=>{ if (confirm(`Desativar ${p.nome||p.email}? Deixa de conseguir entrar na app. O histórico fica.`)) act({action:'desativar',id:p.id},'Utilizador desativado.'); }},'🚫 Desativar')
+          : h('button',{style:'font-size:13px;padding:7px',onclick:()=>act({action:'reativar',id:p.id},'Utilizador reativado.')},'✅ Reativar'))));
+  }
+  // novo utilizador
+  const f={nome:h('input',{placeholder:'Nome'}), email:h('input',{type:'email',placeholder:'email@exemplo.pt',autocomplete:'off'}),
+    pw:h('input',{type:'text',placeholder:'Password inicial (mín. 6)',autocomplete:'off'}),
+    papel:h('select',{}, h('option',{value:'utilizador'},'Utilizador'), h('option',{value:'admin'},'Administrador'))};
+  box.append(h('details',{class:'adv',style:'margin-top:10px'}, h('summary',{},'➕ Adicionar utilizador'),
+    h('label',{class:'fld'},h('span',{},'Nome'),f.nome), h('label',{class:'fld'},h('span',{},'Email'),f.email),
+    h('label',{class:'fld'},h('span',{},'Password inicial'),f.pw), h('label',{class:'fld'},h('span',{},'Perfil'),f.papel),
+    h('button',{class:'primary',style:'width:100%',onclick:async()=>{
+      busy(true,'A criar utilizador…');
+      try{
+        const r=await callFn({action:'criar', nome:f.nome.value.trim(), email:f.email.value.trim(), password:f.pw.value});
+        if (f.papel.value==='admin' && r.id) await sb.from('perfis').update({papel:'admin'}).eq('id',r.id);
+        await loadPerfis(); toast(`Utilizador criado. Envia à pessoa o email e a password inicial.`);
+        busy(false); renderUsers();
+      }catch(e){ busy(false); toast(errMsg(e)); }
+    }},'Criar utilizador')));
+}
+
+/* definição: com quem partilhar os orçamentos novos */
+function renderShareDefault(){
+  const box=$('#shareDefBox'); if (!box) return; box.replaceChildren();
+  const p=getCfg().partilha||{modo:'privado',ids:[]};
+  const state={modo:p.modo, ids:[...(p.ids||[])]};
+  box.append(shareEditor(state, st=>{ setCfg({...getCfg(), partilha:{modo:st.modo, ids:st.ids}}); }));
+}
+
+/* ---------- gráficos simples (SVG) ---------- */
+const kEuro=v=>Math.abs(v)>=1000 ? (v/1000).toLocaleString('pt-PT',{maximumFractionDigits:1})+' k€' : Math.round(v).toLocaleString('pt-PT')+' €';
+function svgEl(t,a,...kids){ const e=document.createElementNS('http://www.w3.org/2000/svg',t); for (const [k,v] of Object.entries(a||{})) if (v!=null) e.setAttribute(k,v); for (const c of kids.flat()){ if (c==null) continue; e.append(c instanceof Node?c:document.createTextNode(String(c))); } return e; }
+function barChart(items, {stacked=false, horizontal=false, colors=['var(--accent)','#F2A93B'], names=[], onClick}={}){
+  if (!items.length) return h('p',{class:'muted small'},'Sem dados.');
+  const tot=it=>stacked ? it.values.reduce((a,b)=>a+b,0) : it.values[0];
+  const max=Math.max(...items.map(tot), 1);
+  let svg;
+  if (horizontal){
+    const rowH=30, W=340, lw=112, vw=58, H=items.length*rowH;
+    svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', role:'img'});
+    items.forEach((it,i)=>{
+      const y=i*rowH, w=Math.max(2,(W-lw-vw)*tot(it)/max);
+      const g=svgEl('g',{style:onClick?'cursor:pointer':null});
+      g.append(svgEl('text',{x:lw-6, y:y+19, 'text-anchor':'end', 'font-size':12, style:'fill:var(--ink)'}, it.label.length>14?it.label.slice(0,13)+'…':it.label),
+        svgEl('rect',{x:lw, y:y+6, width:w, height:rowH-12, rx:3, style:`fill:${colors[0]}`}),
+        svgEl('text',{x:lw+w+5, y:y+19, 'font-size':11, style:'fill:var(--muted)'}, kEuro(tot(it))),
+        svgEl('title',{}, `${it.label}: ${money(tot(it))}`));
+      if (onClick) g.addEventListener('click',()=>onClick(it));
+      svg.append(g);
+    });
+  } else {
+    const W=340, H=190, pb=36, pt=18, n=items.length, bw=(W-8)/n, gap=Math.min(10, bw*.25);
+    svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', role:'img'});
+    svg.append(svgEl('line',{x1:4, x2:W-4, y1:H-pb, y2:H-pb, style:'stroke:var(--line)'}));
+    const every=Math.ceil(n/8);
+    items.forEach((it,i)=>{
+      const w=Math.min(bw-gap, 46), x=4+i*bw+(bw-w)/2; let y=H-pb;
+      const g=svgEl('g',{style:onClick?'cursor:pointer':null});
+      it.values.forEach((v,k)=>{ if (!stacked && k>0) return; const hh=(H-pb-pt)*v/max; y-=hh;
+        g.append(svgEl('rect',{x, y, width:w, height:Math.max(0,hh), style:`fill:${colors[k%colors.length]}`})); });
+      if (n<=8) g.append(svgEl('text',{x:x+w/2, y:y-4, 'text-anchor':'middle', 'font-size':10, style:'fill:var(--muted)'}, kEuro(tot(it))));
+      if (i%every===0) g.append(svgEl('text',{x:x+w/2, y:H-pb+14, 'text-anchor':'middle', 'font-size':11, style:'fill:var(--ink)'}, it.label));
+      g.append(svgEl('title',{}, `${it.label}: ${money(tot(it))}`));
+      if (onClick) g.addEventListener('click',()=>onClick(it));
+      svg.append(g);
+    });
+  }
+  const legend = names.length>1 ? h('div',{class:'small muted',style:'display:flex;gap:12px;justify-content:center;margin-top:4px'},
+    ...names.map((n,k)=>h('span',{}, h('span',{style:`display:inline-block;width:10px;height:10px;border-radius:2px;background:${colors[k]};margin-right:4px`}), n))) : null;
+  return h('div',{}, svg, legend);
+}
+
 /* ---------- definições ---------- */
 function fillSettings(){
   const c=getCfg();
@@ -1646,8 +1878,9 @@ function fillSettings(){
   $('#cfgModel').value=c.model||''; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
   $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false; $('#cfgEmail').value=c.email||'';
   renderLockSettings();
-  $('#adminUsers').hidden=$('#adminClean').hidden=!isAdmin();
-  if (isAdmin()){ renderUsers(); renderSpace(); $('#cleanBox').replaceChildren(); }
+  $('#adminUsers').hidden=$('#adminClean').hidden=$('#adminTest').hidden=!isAdmin();
+  renderShareDefault();
+  if (isAdmin()){ renderUsers(); renderSpace(); renderTestAdmin(); $('#cleanBox').replaceChildren(); }
 }
 $('#cfgEmail').onchange=()=>{ setCfg({...getCfg(), email:$('#cfgEmail').value.trim()}); toast('Email guardado.'); };
 $('#cfgSave').onclick=()=>{
@@ -1778,7 +2011,7 @@ async function renderLockSettings(){
 /* ---------- arranque ---------- */
 $('#appVer').textContent=APP_VERSION;
 function showLogin(){
-  me=null; docsCache=null; cur=null; selecting=false; hideLock();
+  me=null; docsCache=null; cur=null; selecting=false; hideLock(); $('#testBar').hidden=true;
   history.replaceState({v:'vLogin'},'','#entrar');
   show('vLogin'); $('#nav').hidden=true; $('#fab').hidden=true;
 }
@@ -1788,7 +2021,8 @@ async function boot(session){
     await loadPerfis();
     me=perfisMap[session.user.id] || {id:session.user.id, email:session.user.email, nome:session.user.email, papel:'utilizador'};
     showLock();
-    await Promise.all([loadCars(), allDocs(true)]);
+    await Promise.all([loadCars(), allDocs(true), loadPartilhas()]);
+    renderTestBar();
   }catch(e){ toast('Erro a ligar à cloud: '+errMsg(e)); }
   busy(false);
   history.replaceState({v:'vList'},'','#list');
@@ -1799,7 +2033,7 @@ $('#loginForm').addEventListener('submit', async e=>{
   busy(true,'A entrar…');
   const {data,error}=await sb.auth.signInWithPassword({email:$('#lgEmail').value.trim(), password:$('#lgPass').value});
   busy(false);
-  if (error){ $('#lgErr').textContent = /invalid/i.test(error.message) ? 'Email ou password errados.' : errMsg(error); $('#lgErr').hidden=false; return; }
+  if (error){ $('#lgErr').textContent = /banned/i.test(error.message) ? 'Este utilizador foi desativado. Fala com o administrador.' : /invalid/i.test(error.message) ? 'Email ou password errados.' : errMsg(error); $('#lgErr').hidden=false; return; }
   $('#lgPass').value=''; boot(data.session);
 });
 sb.auth.onAuthStateChange((ev)=>{ if (ev==='SIGNED_OUT') showLogin(); });
