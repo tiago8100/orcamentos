@@ -271,10 +271,11 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.0';
+const APP_VERSION='3.0.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
+const SB_FN='quick-processor';   // nome da Edge Function que fala com o Gemini
 const sb=window.supabase.createClient(SB_URL, SB_KEY);
 let me=null, perfisMap={};
 const isAdmin=()=>!!me && me.papel==='admin';
@@ -474,7 +475,7 @@ async function readSheet(blob, level, signal){
   const call=async(tc)=>{
     const gc={temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA};
     if (tc) gc.thinkingConfig=tc;
-    const r=await fetch(`${SB_URL}/functions/v1/ler-folha`,{
+    const r=await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{
       method:'POST', signal,
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY},
       body:JSON.stringify({model, body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
@@ -491,7 +492,7 @@ async function readSheet(blob, level, signal){
     const m=(j.error&&j.error.message)||r.statusText;
     if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco.\n'+m);
     if (r.status===401) throw new Error('A sessão terminou. Entra outra vez na app.');
-    if (r.status===404) throw new Error('A função "ler-folha" não foi encontrada no Supabase.');
+    if (r.status===404) throw new Error('A função de leitura não foi encontrada no Supabase.');
     if (r.status===400||r.status===403) throw new Error('O Gemini recusou o pedido (chave no servidor ou modelo).\n'+m);
     throw new Error(`Erro ${r.status}: ${m}`);
   }
