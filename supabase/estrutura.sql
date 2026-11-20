@@ -1,6 +1,7 @@
 -- =====================================================================
 -- Orçamentos Auto — estrutura da base de dados (Supabase)
--- Correr uma vez no Supabase: SQL Editor → New query → colar tudo → Run
+-- Correr no Supabase: SQL Editor → New query → colar tudo → Run
+-- Pode ser corrido outra vez sem perder dados (atualiza a estrutura e as regras).
 -- =====================================================================
 
 -- ---------- 1. Perfis de utilizador ----------------------------------
@@ -11,6 +12,7 @@ create table if not exists public.perfis (
   papel      text not null default 'utilizador' check (papel in ('admin','utilizador')),
   criado_em  timestamptz not null default now()
 );
+alter table public.perfis add column if not exists ativo boolean not null default true;
 
 -- É administrador?
 create or replace function public.e_admin() returns boolean
@@ -72,7 +74,10 @@ create table if not exists public.orcamentos (
   atualizado_em       timestamptz not null default now(),
   atualizado_por      uuid references public.perfis(id)
 );
+alter table public.orcamentos add column if not exists teste boolean not null default false;            -- dados de teste (só administradores)
+alter table public.orcamentos add column if not exists partilhado_todos boolean not null default false; -- visível a todos os utilizadores
 create index if not exists orcamentos_data on public.orcamentos (data);
+create index if not exists orcamentos_criado_por on public.orcamentos (criado_por);
 create index if not exists orcamentos_matricula on public.orcamentos (matricula);
 
 -- Histórico: quem fez o quê e quando
@@ -85,6 +90,24 @@ create table if not exists public.historico (
 );
 create index if not exists historico_orcamento on public.historico (orcamento_id);
 
+-- Partilhas: com quem cada orçamento é partilhado
+create table if not exists public.partilhas (
+  orcamento_id   uuid not null references public.orcamentos(id) on delete cascade,
+  utilizador_id  uuid not null references public.perfis(id) on delete cascade,
+  primary key (orcamento_id, utilizador_id)
+);
+create or replace function public.e_dono(orc uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from orcamentos where id = orc and criado_por = auth.uid());
+$$;
+alter table public.partilhas enable row level security;
+drop policy if exists "ver partilhas" on public.partilhas;
+create policy "ver partilhas" on public.partilhas for select to authenticated using (true);
+drop policy if exists "criar partilhas" on public.partilhas;
+create policy "criar partilhas" on public.partilhas for insert to authenticated with check (e_admin() or e_dono(orcamento_id));
+drop policy if exists "apagar partilhas" on public.partilhas;
+create policy "apagar partilhas" on public.partilhas for delete to authenticated using (e_admin() or e_dono(orcamento_id));
+
 -- Regras do fluxo: A validar → Validado → Aprovado → Pago (+ Reabrir só pelo administrador)
 create or replace function public.orc_regras() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -95,6 +118,7 @@ begin
     new.criado_por := auth.uid(); new.criado_em := now();
     new.atualizado_por := auth.uid(); new.atualizado_em := now();
     new.validado := false; new.estado := 'orcamento';
+    new.teste := coalesce(new.teste,false) and adm;   -- só administradores criam dados de teste
     new.validado_em := null; new.validado_por := null;
     new.aprovado_em := null; new.aprovado_por := null;
     new.pago_em := null; new.pago_registado_por := null;
@@ -146,7 +170,7 @@ begin
     new.pago_em := old.pago_em; new.pago_registado_por := old.pago_registado_por;
   end if;
 
-  new.criado_por := old.criado_por; new.criado_em := old.criado_em;
+  new.criado_por := old.criado_por; new.criado_em := old.criado_em; new.teste := old.teste;
   new.atualizado_em := now(); new.atualizado_por := auth.uid();
   return new;
 end $$;
@@ -166,22 +190,29 @@ create trigger orc_criado after insert on public.orcamentos
 
 alter table public.orcamentos enable row level security;
 drop policy if exists "ver orcamentos" on public.orcamentos;
-create policy "ver orcamentos" on public.orcamentos for select to authenticated using (true);
+create policy "ver orcamentos" on public.orcamentos for select to authenticated using (
+  e_admin()
+  or (not teste and (criado_por = auth.uid() or partilhado_todos
+      or exists (select 1 from public.partilhas p where p.orcamento_id = orcamentos.id and p.utilizador_id = auth.uid())))
+);
 drop policy if exists "criar orcamentos" on public.orcamentos;
 create policy "criar orcamentos" on public.orcamentos for insert to authenticated with check (true);
 drop policy if exists "alterar orcamentos" on public.orcamentos;
-create policy "alterar orcamentos" on public.orcamentos for update to authenticated using (true) with check (true);
+create policy "alterar orcamentos" on public.orcamentos for update to authenticated
+  using (e_admin() or criado_por = auth.uid()) with check (e_admin() or criado_por = auth.uid());
 -- Apagar: pagos só pelo administrador e só se tiverem mais de 1 ano (limpeza);
 --         outros: administrador, ou quem criou enquanto ainda está "a validar".
 drop policy if exists "apagar orcamentos" on public.orcamentos;
 create policy "apagar orcamentos" on public.orcamentos for delete to authenticated using (
-  (estado = 'pago' and e_admin() and coalesce(data, criado_em::date) < current_date - interval '1 year')
+  (teste and e_admin())
+  or (estado = 'pago' and e_admin() and coalesce(data, criado_em::date) < current_date - interval '1 year')
   or (estado <> 'pago' and (e_admin() or (criado_por = auth.uid() and not validado and estado = 'orcamento')))
 );
 
 alter table public.historico enable row level security;
 drop policy if exists "ver historico" on public.historico;
-create policy "ver historico" on public.historico for select to authenticated using (true);
+create policy "ver historico" on public.historico for select to authenticated
+  using (exists (select 1 from public.orcamentos o where o.id = historico.orcamento_id));
 
 -- ---------- 3. Memória de viaturas (matrícula → marca/modelo) ----------
 create table if not exists public.viaturas (
@@ -202,11 +233,15 @@ create policy "alterar viaturas" on public.viaturas for update to authenticated 
 -- ---------- 4. Fotos (armazenamento privado) -------------------------
 insert into storage.buckets (id, name, public) values ('fotos', 'fotos', false) on conflict (id) do nothing;
 drop policy if exists "ver fotos" on storage.objects;
-create policy "ver fotos" on storage.objects for select to authenticated using (bucket_id = 'fotos');
+create policy "ver fotos" on storage.objects for select to authenticated using (bucket_id = 'fotos' and (
+  e_admin() or owner_id = auth.uid()::text
+  or (name not like 'exportacoes/%' and exists (select 1 from public.orcamentos o where o.id::text = split_part(name, '/', 1)))));
 drop policy if exists "enviar fotos" on storage.objects;
 create policy "enviar fotos" on storage.objects for insert to authenticated with check (bucket_id = 'fotos');
 drop policy if exists "apagar fotos" on storage.objects;
-create policy "apagar fotos" on storage.objects for delete to authenticated using (bucket_id = 'fotos');
+create policy "apagar fotos" on storage.objects for delete to authenticated using (bucket_id = 'fotos' and (
+  e_admin() or owner_id = auth.uid()::text
+  or (name not like 'exportacoes/%' and exists (select 1 from public.orcamentos o where o.id::text = split_part(name, '/', 1) and o.criado_por = auth.uid()))));
 
 -- ---------- 5. Espaço usado (para o indicador na app) -----------------
 create or replace function public.espaco_usado() returns json
@@ -225,4 +260,5 @@ grant select, update                 on public.perfis     to authenticated;
 grant select, insert, update, delete on public.orcamentos to authenticated;
 grant select                         on public.historico  to authenticated;
 grant select, insert, update         on public.viaturas   to authenticated;
-revoke all on public.perfis, public.orcamentos, public.historico, public.viaturas from anon;
+grant select, insert, delete         on public.partilhas  to authenticated;
+revoke all on public.perfis, public.orcamentos, public.historico, public.viaturas, public.partilhas from anon;
