@@ -135,7 +135,9 @@ begin
     if nov = 'a validar' then new.validado_em := null; new.validado_por := null; end if;
     insert into historico (orcamento_id, acao, por) values (new.id, acao, auth.uid());
   else
-    if ant <> 'a validar' and (new.dados is distinct from old.dados or new.fotos is distinct from old.fotos
+    -- (exceção: o administrador pode apagar as fotos de orçamentos fechados, na limpeza de dados antigos)
+    if ant <> 'a validar' and (new.dados is distinct from old.dados
+                               or (new.fotos is distinct from old.fotos and not (adm and cardinality(new.fotos) = 0))
                                or new.data is distinct from old.data or new.matricula is distinct from old.matricula) then
       raise exception 'Orçamento bloqueado (%). Reabre-o para alterar.', ant;
     end if;
