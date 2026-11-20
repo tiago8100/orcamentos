@@ -350,7 +350,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.3.1';
+const APP_VERSION='3.4';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -358,7 +358,7 @@ const SB_FN='quick-processor';   // nome da Edge Function que fala com o Gemini
 const sb=window.supabase.createClient(SB_URL, SB_KEY);
 let me=null, perfisMap={};
 const isAdmin=()=>!!me && me.papel==='admin';
-const nomeDe=id=>(id && perfisMap[id] && (perfisMap[id].nome||perfisMap[id].email)) || '—';
+const nomeDe=id=>(id && perfisMap[id] && (perfisMap[id].nome||perfisMap[id].email)) || (id && exMap[id] && `${exMap[id].nome||exMap[id].email} (eliminado)`) || '—';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -1740,9 +1740,11 @@ $('#bkExport').onclick=async()=>{
 };
 
 /* ---------- administração: utilizadores, espaço e limpeza ---------- */
+let exMap={};
 async function loadPerfis(){
-  const {data}=await sb.from('perfis').select('*');
+  const [{data},ex]=await Promise.all([sb.from('perfis').select('*'), sb.from('ex_utilizadores').select('*')]);
   perfisMap=Object.fromEntries((data||[]).map(p=>[p.id,p]));
+  exMap=Object.fromEntries(((ex&&ex.data)||[]).map(p=>[p.id,p]));
   if (me && perfisMap[me.id]) me=perfisMap[me.id];
 }
 const mb=b=>(b/1048576).toLocaleString('pt-PT',{maximumFractionDigits:1})+' MB';
@@ -1931,7 +1933,8 @@ function renderUsers(){
           await act({action:'password',id:p.id,password:pw},'Password alterada.'); sendAccess(p.nome, p.email, pw); }},'🔑 Repor password'),
         p.id===me.id ? null : ativo
           ? h('button',{class:'danger',style:'font-size:13px;padding:7px',onclick:async()=>{ if (await ask(`Desativar ${p.nome||p.email}?\n\n Deixa de conseguir entrar na app. O histórico fica.`)) act({action:'desativar',id:p.id},'Utilizador desativado.'); }},'🚫 Desativar')
-          : h('button',{style:'font-size:13px;padding:7px',onclick:()=>act({action:'reativar',id:p.id},'Utilizador reativado.')},'✅ Reativar'))));
+          : h('button',{style:'font-size:13px;padding:7px',onclick:()=>act({action:'reativar',id:p.id},'Utilizador reativado.')},'✅ Reativar'),
+        p.id===me.id ? null : h('button',{class:'danger',style:'font-size:13px;padding:7px',onclick:()=>eliminarUser(p)},'🗑️ Eliminar'))));
   }
   // novo utilizador
   const f={nome:h('input',{placeholder:'Nome'}), email:h('input',{type:'email',placeholder:'email@exemplo.pt',autocomplete:'off'}),
@@ -1950,6 +1953,44 @@ function renderUsers(){
         sendAccess(f.nome.value.trim(), f.email.value.trim(), f.pw.value);
       }catch(e){ busy(false); toast(errMsg(e)); }
     }},'Criar utilizador')));
+}
+
+/* eliminar utilizador: os orçamentos dele passam para outro utilizador ou são apagados */
+async function eliminarUser(p){
+  const nome=p.nome||p.email;
+  busy(true,'A contar orçamentos…');
+  const {data:rows}=await sb.from('orcamentos').select('id,estado').eq('criado_por',p.id);
+  busy(false);
+  const n=(rows||[]).length, pagos=(rows||[]).filter(r=>r.estado==='pago').length;
+  const outros=Object.values(perfisMap).filter(x=>x.id!==p.id && x.ativo!==false).sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
+  let destino=null;
+  if (n){
+    const sel=h('select',{style:'width:100%'}, ...outros.map(x=>h('option',{value:x.id}, (x.nome||x.email)+(x.id===me.id?' (eu)':'')))); if (outros.some(x=>x.id===me.id)) sel.value=me.id;
+    const rs='width:20px;height:20px;flex:none;margin:2px 0 0;padding:0';
+    const rMig=h('input',{type:'radio',name:'elim',style:rs}), rDel=h('input',{type:'radio',name:'elim',style:rs}); rMig.checked=true;
+    rMig.onchange=rDel.onchange=()=>{ sel.disabled=rDel.checked; };
+    const body=h('div',{},
+      h('p',{style:'margin:0 0 10px'}, `${nome} criou ${n} orçamento${n>1?'s':''}${pagos?` (${pagos} já pago${pagos>1?'s':''})`:''}. O que fazer com ${n>1?'eles':'ele'}?`),
+      h('label',{style:'display:flex;gap:8px;align-items:flex-start;margin-bottom:6px'}, rMig, h('span',{},h('b',{},'Passar para outro utilizador'), h('br'), h('span',{class:'small muted'},'Recebe os orçamentos, com as fotos e o histórico.'))),
+      h('div',{style:'margin:0 0 12px 26px'}, sel),
+      h('label',{style:'display:flex;gap:8px;align-items:flex-start'}, rDel, h('span',{},h('b',{},'Apagar os orçamentos'), h('br'), h('span',{class:'small muted'},'Apaga os orçamentos e as fotos. Não dá para recuperar.'))));
+    const ok=window.__autoAsk ? (window.__autoElim||'migrar') : await dlg({title:`Eliminar ${nome}`, body,
+      buttons:[{label:'Cancelar',value:false},{label:'Continuar',value:'ok',cls:'danger'}], dismiss:false});
+    if (!ok) return;
+    const apagar = window.__autoAsk ? ok==='apagar' : rDel.checked;
+    if (!apagar){ destino=window.__autoAsk ? (window.__autoDestino||me.id) : sel.value; if (!destino) return toast('Escolhe para quem passam os orçamentos.'); }
+    const txt = apagar
+      ? `⚠️ Apagar ${nome} e os ${n} orçamento${n>1?'s':''}?\n\nOs orçamentos e as fotos são apagados para sempre.`
+      : `Eliminar ${nome}?\n\nOs ${n} orçamento${n>1?'s':''} passam para ${nomeDe(destino)}. A conta é apagada e deixa de conseguir entrar.`;
+    if (!await ask(txt,{ok:'Eliminar',danger:true})) return;
+  } else if (!await ask(`Eliminar ${nome}?\n\nNão tem orçamentos. A conta é apagada e deixa de conseguir entrar.`,{ok:'Eliminar',danger:true})) return;
+  busy(true,'A eliminar utilizador…');
+  try{
+    const r=await callFn({action:'eliminar', id:p.id, destino});
+    await loadPerfis(); await allDocs(true);
+    toast(destino ? `${nome} eliminado. ${r.orcamentos||0} orçamento(s) passaram para ${nomeDe(destino)}.` : `${nome} eliminado${n?` com ${r.orcamentos||0} orçamento(s)`:''}.`);
+  }catch(e){ toast(errMsg(e)); }
+  busy(false); renderUsers();
 }
 
 /* definição: com quem partilhar os orçamentos novos */

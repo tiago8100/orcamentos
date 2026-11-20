@@ -1,6 +1,6 @@
 // Orçamentos Auto — função do servidor (no Supabase chama-se "quick-processor")
 // 1) Leitura das folhas: envia o pedido da app ao Gemini com a chave guardada no segredo GEMINI_API_KEY.
-// 2) Gestão de utilizadores (só administradores): criar, repor password, desativar e reativar.
+// 2) Gestão de utilizadores (só administradores): criar, repor password, desativar, reativar e eliminar.
 // As chaves nunca chegam aos telemóveis.
 
 const cors = {
@@ -37,7 +37,7 @@ async function adminAction(callerId: string, p: Record<string, unknown>) {
 
   const action = String(p.action);
   const id = p.id ? String(p.id).replace(/[^a-f0-9-]/gi, "") : "";
-  if (action === "desativar" && id === callerId) return json({ error: { message: "Não te podes desativar a ti próprio." } }, 400);
+  if ((action === "desativar" || action === "eliminar") && id === callerId) return json({ error: { message: action === "eliminar" ? "Não te podes eliminar a ti próprio." : "Não te podes desativar a ti próprio." } }, 400);
 
   if (action === "criar") {
     const email = String(p.email ?? "").trim(), password = String(p.password ?? ""), nome = String(p.nome ?? "").trim();
@@ -62,6 +62,24 @@ async function adminAction(callerId: string, p: Record<string, unknown>) {
     if (!r.ok) return json({ error: { message: "Não foi possível alterar o acesso." } }, r.status);
     await fetch(`${URL_SB}/rest/v1/perfis?id=eq.${id}`, { method: "PATCH", headers: svcHeaders(), body: JSON.stringify({ ativo }) });
     return json({ ok: true, ativo });
+  }
+  if (action === "eliminar") {
+    const destino = p.destino ? String(p.destino).replace(/[^a-f0-9-]/gi, "") : null;
+    // 1. orçamentos: passam para outro utilizador ou são apagados
+    const r1 = await fetch(`${URL_SB}/rest/v1/rpc/eliminar_utilizador`, { method: "POST", headers: svcHeaders(),
+      body: JSON.stringify({ alvo: id, destino }) });
+    const res = await r1.json().catch(() => ({}));
+    if (!r1.ok) return json({ error: { message: res.message || "Não foi possível tratar os orçamentos deste utilizador." } }, r1.status);
+    // 2. fotos e exportações
+    const fich: string[] = res.ficheiros ?? [];
+    for (let i = 0; i < fich.length; i += 500) {
+      await fetch(`${URL_SB}/storage/v1/object/fotos`, { method: "DELETE", headers: svcHeaders(),
+        body: JSON.stringify({ prefixes: fich.slice(i, i + 500) }) });
+    }
+    // 3. a conta (o perfil e as partilhas saem com ela)
+    const r3 = await fetch(`${URL_SB}/auth/v1/admin/users/${id}`, { method: "DELETE", headers: svcHeaders() });
+    if (!r3.ok) return json({ error: { message: "Os orçamentos foram tratados, mas não foi possível apagar a conta. Tenta outra vez." } }, r3.status);
+    return json({ ok: true, orcamentos: res.orcamentos ?? 0, ficheiros: fich.length });
   }
   return json({ error: { message: "Ação desconhecida." } }, 400);
 }

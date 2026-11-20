@@ -114,6 +114,8 @@ language plpgsql security definer set search_path = public as $$
 declare
   ant text; nov text; adm boolean := e_admin(); acao text;
 begin
+  -- operações internas do servidor (ex.: eliminar um utilizador e passar os orçamentos para outro)
+  if current_setting('orcamentos.sistema', true) = 'on' then return new; end if;
   if tg_op = 'INSERT' then
     new.criado_por := auth.uid(); new.criado_em := now();
     new.atualizado_por := auth.uid(); new.atualizado_em := now();
@@ -262,3 +264,66 @@ grant select                         on public.historico  to authenticated;
 grant select, insert, update         on public.viaturas   to authenticated;
 grant select, insert, delete         on public.partilhas  to authenticated;
 revoke all on public.perfis, public.orcamentos, public.historico, public.viaturas, public.partilhas from anon;
+
+-- ---------- 7. Eliminar utilizadores (só pelo servidor, a pedido de um administrador) ----------
+-- Guarda o nome de quem foi eliminado, para o histórico continuar a mostrar quem validou/aprovou/pagou.
+create table if not exists public.ex_utilizadores (
+  id            uuid primary key,
+  nome          text,
+  email         text,
+  eliminado_em  timestamptz not null default now()
+);
+alter table public.ex_utilizadores enable row level security;
+drop policy if exists "ver ex utilizadores" on public.ex_utilizadores;
+create policy "ver ex utilizadores" on public.ex_utilizadores for select to authenticated using (true);
+grant select on public.ex_utilizadores to authenticated;
+revoke all on public.ex_utilizadores from anon;
+
+-- Os carimbos (validado/aprovado/pago/atualizado por, histórico, viaturas) deixam de depender do perfil existir.
+alter table public.orcamentos drop constraint if exists orcamentos_validado_por_fkey;
+alter table public.orcamentos drop constraint if exists orcamentos_aprovado_por_fkey;
+alter table public.orcamentos drop constraint if exists orcamentos_pago_registado_por_fkey;
+alter table public.orcamentos drop constraint if exists orcamentos_atualizado_por_fkey;
+alter table public.historico  drop constraint if exists historico_por_fkey;
+alter table public.viaturas   drop constraint if exists viaturas_atualizado_por_fkey;
+
+-- destino = null → apaga os orçamentos do utilizador; destino = outro utilizador → passam a ser dele.
+-- Devolve os ficheiros a apagar do armazenamento (a função do servidor apaga-os e depois apaga a conta).
+create or replace function public.eliminar_utilizador(alvo uuid, destino uuid default null) returns json
+language plpgsql security definer set search_path = public, storage as $$
+declare
+  n_alvo text; e_alvo text; n_dest text; n int := 0; fich text[] := '{}';
+begin
+  select coalesce(nome, email), email into n_alvo, e_alvo from perfis where id = alvo;
+  if n_alvo is null then raise exception 'Esse utilizador não existe.'; end if;
+  if destino is not null then
+    if destino = alvo then raise exception 'Escolhe outro utilizador para receber os orçamentos.'; end if;
+    select coalesce(nome, email) into n_dest from perfis where id = destino and ativo;
+    if n_dest is null then raise exception 'O utilizador que vai receber os orçamentos não existe ou está desativado.'; end if;
+  end if;
+
+  perform set_config('orcamentos.sistema', 'on', true);
+  insert into ex_utilizadores (id, nome, email) values (alvo, n_alvo, e_alvo)
+    on conflict (id) do update set nome = excluded.nome, email = excluded.email, eliminado_em = now();
+
+  if destino is not null then
+    insert into historico (orcamento_id, acao, por)
+      select id, 'passou de ' || n_alvo || ' para ' || n_dest || ' (utilizador eliminado)', null from orcamentos where criado_por = alvo;
+    update orcamentos set criado_por = destino where criado_por = alvo;
+    get diagnostics n = row_count;
+    -- já não faz sentido partilhar com o próprio dono
+    delete from partilhas p using orcamentos o where p.orcamento_id = o.id and o.criado_por = destino and p.utilizador_id = destino;
+  else
+    select coalesce(array_agg(name), '{}') into fich from storage.objects
+      where bucket_id = 'fotos' and name not like 'exportacoes/%'
+        and split_part(name, '/', 1) in (select id::text from orcamentos where criado_por = alvo);
+    delete from orcamentos where criado_por = alvo;
+    get diagnostics n = row_count;
+  end if;
+  -- exportações de Excel feitas por esse utilizador
+  fich := fich || coalesce((select array_agg(name) from storage.objects
+            where bucket_id = 'fotos' and name like 'exportacoes/%' and owner_id = alvo::text), '{}');
+  return json_build_object('orcamentos', n, 'ficheiros', fich, 'nome', n_alvo, 'destino', n_dest);
+end $$;
+revoke all on function public.eliminar_utilizador(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.eliminar_utilizador(uuid, uuid) to service_role;
