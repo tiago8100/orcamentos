@@ -1,5 +1,5 @@
 // Muda este número sempre que publicares uma versão nova.
-const CACHE = 'orcamentos-v6';
+const CACHE = 'orcamentos-v7';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, {cache: 'reload'}))))); });
 self.addEventListener('activate', e => {

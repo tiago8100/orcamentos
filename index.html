@@ -41,8 +41,8 @@
   /* lista */
   #q{margin-bottom:10px}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
-  #chips{margin-bottom:12px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
-  .chip-btn{padding:6px 12px;border-radius:20px;font-size:14px;white-space:nowrap}
+  #chips{margin-bottom:12px;gap:5px;flex-wrap:nowrap}
+  .chip-btn{flex:1 1 auto;padding:6px 4px;border-radius:16px;font-size:12.5px;white-space:nowrap}
   .chip-btn.on{background:var(--accent);border-color:var(--accent);color:#fff}
   .chip{font-size:12px;padding:2px 8px;border-radius:12px;background:var(--bg);border:1px solid var(--line);white-space:nowrap}
   .chip.st-validado{background:var(--ok-bg);color:var(--ok);border-color:transparent}
@@ -239,7 +239,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='2.0';
+const APP_VERSION='2.1';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -318,6 +318,11 @@ const dbAll=()=>tx('readonly',s=>s.getAll());
 const dbGet=id=>tx('readonly',s=>s.get(id));
 const dbPut=d=>tx('readwrite',s=>s.put(d));
 const dbDel=id=>tx('readwrite',s=>s.delete(id));
+/* orçamento sem nada preenchido (ex.: manual aberto e abandonado) */
+function isBlank(d){
+  return !d.fotos.length && !['matricula','marca','modelo','kms','cliente','oficina','nipc','morada','assinatura','observacoes','mo_horas','mo_preco_hora','mo_total','material_escrito','total_escrito'].some(k=>d[k]!=null&&d[k]!=='')
+    && !d.pecas.some(p=>(p.descricao||'').trim()||p.valor!=null) && !d.validado && d.estado==='orcamento';
+}
 function migrate(d){
   if (!Array.isArray(d.fotos)){ d.fotos = d.foto ? [d.foto] : []; delete d.foto; }
   if (!d.estado) d.estado='orcamento';
@@ -532,6 +537,8 @@ function go(st, replace){
 }
 async function route(st){
   await flushSave();
+  const prev=cur;
+  if (prev && (st.v!=='vEdit' || st.id!==prev.id) && isBlank(prev)) await dbDel(prev.id);
   if (cropCancel) cropCancel();
   closeViewer();
   const v=st.v||'vList';
@@ -553,7 +560,7 @@ function openDoc(d){ cur=migrate(d); return go({v:'vEdit', id:d.id}); }
 
 /* ---------- lista ---------- */
 let q='', filt='todos';
-const FILTS=[['todos','Todos'],['rever','Por rever'],['validado','Validados'],['porpagar','Por pagar'],['pago','Pagos']];
+const FILTS=[['todos','Todos'],['rever','A rever'],['validado','Validados'],['porpagar','Por pagar'],['pago','Pagos']];
 function matchQ(d){
   if (!q) return true;
   const hay=[d.matricula,d.marca,d.modelo,d.oficina,d.assinatura,d.cliente,...d.pecas.map(p=>p.descricao)].filter(Boolean).join(' ').toLowerCase();
@@ -645,7 +652,7 @@ $('#btnManual').onclick=async()=>{
   const now=Date.now();
   const d={id:uid(), criado:now, atualizado:now, fotos:[], manual:true, data:todayISO(), estado:'orcamento',
     pecas:[{descricao:'',quantidade:1,valor:null,riscado:false}], iva_pct:parseNum(getCfg().iva)??23, erro:null};
-  await dbPut(d); openDoc(d);
+  openDoc(d);   // só fica gravado quando preencheres alguma coisa
 };
 
 /* ---------- edição ---------- */
