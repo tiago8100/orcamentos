@@ -1,5 +1,6 @@
 // Orçamentos Auto — função do servidor (no Supabase chama-se "quick-processor")
-// 1) Leitura das folhas: envia o pedido da app ao Gemini com a chave guardada no segredo GEMINI_API_KEY.
+// 1) Leitura das folhas: envia o pedido da app ao Gemini (segredo GEMINI_API_KEY).
+//    Se o Gemini estiver ocupado, usa a Mistral como reserva (segredo MISTRAL_API_KEY, opcional).
 // 2) Gestão de utilizadores (só administradores): criar, repor password, desativar, reativar e eliminar.
 // As chaves nunca chegam aos telemóveis.
 
@@ -101,14 +102,93 @@ Deno.serve(async (req) => {
   // 2. Gestão de utilizadores
   if (payload.action) return adminAction(user.id, payload);
 
-  // 3. Leitura da folha pelo Gemini
+  // 3. Leitura da folha: Gemini; se estiver ocupado, Mistral como reserva (se houver a chave MISTRAL_API_KEY)
+  const fornecedor = String(payload.fornecedor || "auto");
+  const temMistral = !!Deno.env.get("MISTRAL_API_KEY");
+  if (fornecedor === "mistral") {
+    if (!temMistral) return json({ error: { message: "Falta configurar o segredo MISTRAL_API_KEY no Supabase." } }, 500);
+    return lerMistral(payload.body as GemBody);
+  }
   const key = Deno.env.get("GEMINI_API_KEY");
-  if (!key) return json({ error: { message: "Falta configurar o segredo GEMINI_API_KEY no Supabase." } }, 500);
-  const model = String(payload.model || "gemini-flash-latest").replace(/^models\//, "").replace(/[^a-zA-Z0-9.\-]/g, "");
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-    body: JSON.stringify(payload.body ?? {}),
-  });
-  return json(await r.text(), r.status);
+  if (!key && !temMistral) return json({ error: { message: "Falta configurar o segredo GEMINI_API_KEY no Supabase." } }, 500);
+  let gStatus = 503, gText = '{"error":{"message":"Sem chave do Gemini"}}';
+  if (key) {
+    const model = String(payload.model || "gemini-flash-latest").replace(/^models\//, "").replace(/[^a-zA-Z0-9.\-]/g, "");
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(payload.body ?? {}),
+      });
+      gStatus = r.status; gText = await r.text();
+    } catch (e) { gStatus = 503; gText = JSON.stringify({ error: { message: "Sem ligação ao Gemini: " + e } }); }
+  }
+  const passageiro = [429, 500, 502, 503, 504].includes(gStatus);
+  if (passageiro && temMistral && fornecedor !== "gemini") {
+    const m = await lerMistral(payload.body as GemBody);
+    if (m.ok) return m;
+    const mj = await m.json().catch(() => ({}));
+    return json({ error: { message: "O Gemini e a Mistral (reserva) estão ocupados neste momento. " + (mj?.error?.message ?? "") } }, gStatus);
+  }
+  return json(gText, gStatus);
 });
+
+/* ---------- Mistral (reserva) ---------- */
+type GemPart = { text?: string; inline_data?: { mime_type: string; data: string }; inlineData?: { mimeType: string; data: string } };
+type GemBody = { contents?: { parts?: GemPart[] }[]; generationConfig?: { responseSchema?: unknown; temperature?: number } };
+
+// O esquema do Gemini (OBJECT, STRING, nullable…) passa para JSON Schema normal.
+function paraJsonSchema(s: any): any {
+  if (!s || typeof s !== "object") return s;
+  const out: any = {};
+  const t = s.type ? String(s.type).toLowerCase() : undefined;
+  if (t) out.type = s.nullable ? [t, "null"] : t;
+  if (s.description) out.description = s.description;
+  if (s.enum) out.enum = s.enum;
+  if (s.properties) out.properties = Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, paraJsonSchema(v)]));
+  if (s.required) out.required = s.required;
+  if (s.items) out.items = paraJsonSchema(s.items);
+  if (t === "object") out.additionalProperties = false;
+  return out;
+}
+
+async function lerMistral(body: GemBody): Promise<Response> {
+  const key = Deno.env.get("MISTRAL_API_KEY")!;
+  const parts = body?.contents?.[0]?.parts ?? [];
+  const texto = parts.filter((p) => p.text).map((p) => p.text).join("\n");
+  const imagens = parts.filter((p) => p.inline_data || p.inlineData).map((p) => {
+    const d = p.inline_data ? { m: p.inline_data.mime_type, b: p.inline_data.data } : { m: p.inlineData!.mimeType, b: p.inlineData!.data };
+    return { type: "image_url", image_url: `data:${d.m};base64,${d.b}` };
+  });
+  const schema = paraJsonSchema(body?.generationConfig?.responseSchema);
+  const prompt = texto + (schema ? "\n\nResponde só com um objeto JSON que siga este esquema:\n" + JSON.stringify(schema) : "");
+  const modelos = (Deno.env.get("MISTRAL_MODEL") || "mistral-medium-latest,mistral-small-latest").split(",").map((x) => x.trim()).filter(Boolean);
+  let ult = { status: 503, text: "" };
+  for (const modelo of modelos) {
+    for (const rf of schema ? [{ type: "json_schema", json_schema: { name: "orcamento", schema, strict: false } }, { type: "json_object" }] : [{ type: "json_object" }]) {
+      let r: Response;
+      try {
+        r = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model: modelo, temperature: 0, response_format: rf,
+            messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...imagens] }] }),
+        });
+      } catch (e) { ult = { status: 503, text: "Sem ligação à Mistral: " + e }; break; }
+      const t = await r.text();
+      if (r.ok) {
+        const j = JSON.parse(t);
+        let out = String(j.choices?.[0]?.message?.content ?? "");
+        out = out.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+        // devolve no mesmo formato do Gemini, para a app não ter de mudar
+        return json({ candidates: [{ content: { parts: [{ text: out }] }, finishReason: j.choices?.[0]?.finish_reason }],
+          modelVersion: `${j.model || modelo} (Mistral, reserva)`, usageMetadata: {} });
+      }
+      ult = { status: r.status, text: t };
+      if (r.status === 401) return json({ error: { message: "A chave da Mistral (MISTRAL_API_KEY) não é válida." } }, 500);
+      if (r.status !== 400 && r.status !== 422) break;   // formato não aceite → tenta o seguinte; outro erro → muda de modelo
+    }
+  }
+  let msg = ult.text; try { const e = JSON.parse(ult.text); msg = e.message || e.error?.message || msg; } catch { /* texto */ }
+  return json({ error: { message: "Mistral: " + String(msg).slice(0, 300) } }, ult.status >= 400 ? ult.status : 503);
+}

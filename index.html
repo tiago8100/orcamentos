@@ -238,6 +238,7 @@
       <details class="adv"><summary>Avançado</summary>
         <label class="fld"><span>Modelo do Gemini</span><input id="cfgModel" list="models" placeholder="gemini-flash-latest"></label>
         <datalist id="models"><option value="gemini-flash-latest"><option value="gemini-flash-lite-latest"></datalist>
+        <label class="fld"><span>Serviço de leitura</span><select id="cfgForn"><option value="auto">Automático (Gemini; Mistral se estiver ocupado)</option><option value="gemini">Só Gemini</option><option value="mistral">Só Mistral</option></select></label>
       </details>
       <button class="primary" id="cfgSave" style="width:100%;margin-top:6px">Guardar definições</button>
       <p class="muted small">A leitura das fotos passa pelo servidor da app; a chave do Gemini não fica no telemóvel. No plano gratuito, o Google pode usar as imagens enviadas para melhorar os seus produtos.</p>
@@ -350,7 +351,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.4.1';
+const APP_VERSION='3.5';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -573,7 +574,7 @@ async function readSheet(blob, level, signal){
       r=await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{
         method:'POST', signal,
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY},
-        body:JSON.stringify({model:mdl, body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
+        body:JSON.stringify({model:mdl, fornecedor:cfg.fornecedor||'auto', body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
       });
     }catch(e){
       if (e.name==='AbortError') throw e;
@@ -612,7 +613,7 @@ async function readSheet(blob, level, signal){
     const m=(j.error&&j.error.message)||r.statusText;
     if (r.status===0) throw new Error('Sem ligação à internet. Verifica a rede e toca em 📖 Ler novamente.');
     if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco (📖 Ler novamente).\n'+m);
-    if (r.status>=500) throw new Error('O Gemini está sobrecarregado neste momento (problema do lado do Google, não da app). Já tentei 5 vezes, incluindo com o modelo de reserva. Espera uns minutos e toca em 📖 Ler novamente.');
+    if (r.status>=500) throw new Error(/Mistral/.test(m) ? m+' Espera uns minutos e toca em 📖 Ler novamente.' : 'O Gemini está sobrecarregado neste momento (problema do lado do Google, não da app). Já tentei 5 vezes, incluindo com o modelo de reserva. Espera uns minutos e toca em 📖 Ler novamente.');
     if (r.status===401) throw new Error('A sessão terminou. Entra outra vez na app.');
     if (r.status===404) throw new Error('A função de leitura não foi encontrada no Supabase.');
     if (r.status===400||r.status===403) throw new Error('O Gemini recusou o pedido (chave no servidor ou modelo).\n'+m);
@@ -2048,7 +2049,7 @@ function barChart(items, {stacked=false, horizontal=false, colors=['var(--accent
 function fillSettings(){
   const c=getCfg();
   $('#meInfo').replaceChildren(h('b',{},me?.nome||''), ' · ', me?.email||'', h('br'), h('span',{class:'muted small'}, isAdmin()?'Administrador':'Utilizador'));
-  $('#cfgModel').value=c.model||''; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
+  $('#cfgModel').value=c.model||''; $('#cfgForn').value=c.fornecedor||'auto'; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
   $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false; $('#cfgEmail').value=c.email||'';
   renderLockSettings();
   $('#adminUsers').hidden=$('#adminClean').hidden=$('#adminTest').hidden=!isAdmin();
@@ -2057,7 +2058,7 @@ function fillSettings(){
 }
 $('#cfgEmail').onchange=()=>{ setCfg({...getCfg(), email:$('#cfgEmail').value.trim()}); toast('Email guardado.'); };
 $('#cfgSave').onclick=()=>{
-  setCfg({...getCfg(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked, email:$('#cfgEmail').value.trim()});
+  setCfg({...getCfg(), model:$('#cfgModel').value.trim(), fornecedor:$('#cfgForn').value, iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked, email:$('#cfgEmail').value.trim()});
   toast('Definições guardadas.');
 };
 $('#btnMyPw').onclick=changeMyPassword;
