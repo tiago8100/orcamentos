@@ -2,8 +2,6 @@
 // Recebe o pedido da app, confirma que vem de um utilizador com sessão iniciada
 // e envia-o ao Gemini com a chave guardada no segredo GEMINI_API_KEY.
 // A chave nunca chega aos telemóveis.
-import { createClient } from "npm:@supabase/supabase-js@2";
-
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -20,9 +18,12 @@ Deno.serve(async (req) => {
 
   // 1. Só utilizadores com sessão iniciada
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return json({ error: { message: "Sessão inválida. Entra outra vez na app." } }, 401);
+  const apikey = req.headers.get("apikey") || Deno.env.get("SUPABASE_ANON_KEY") || "";
+  const r0 = await fetch(`${Deno.env.get("SUPABASE_URL")}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${token}`, apikey },
+  });
+  const user = r0.ok ? await r0.json() : null;
+  if (!user?.id) return json({ error: { message: "Sessão inválida. Entra outra vez na app." } }, 401);
 
   // 2. Chave do Gemini (segredo do projeto)
   const key = Deno.env.get("GEMINI_API_KEY");

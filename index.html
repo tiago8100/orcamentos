@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <style>
   :root{
     --bg:#f4f6f9; --card:#fff; --ink:#1b2430; --muted:#6b7684; --line:#dfe4ea;
@@ -156,6 +157,7 @@
   <button id="btnBack" class="icon" aria-label="Voltar" hidden>←</button>
   <h1 id="title">Orçamentos</h1>
   <span id="saved"></span>
+  <button id="btnRefresh" class="icon" aria-label="Atualizar" title="Atualizar" hidden>⟳</button>
   <button id="btnSelect" class="icon" aria-label="Selecionar vários" title="Selecionar" hidden>☑️</button>
   <button id="btnDel" class="icon" aria-label="Apagar" title="Apagar" hidden>🗑️</button>
   <button id="btnCancelSel" class="icon" aria-label="Cancelar seleção" hidden>✕</button>
@@ -165,16 +167,31 @@
   <section id="vList" hidden>
     <input id="q" type="search" placeholder="🔎 Matrícula, oficina, mecânico, peça…" autocomplete="off">
     <div class="chips" id="chips"></div>
-    <div id="noKeyMsg" class="alert warn" hidden>Falta a chave do Gemini. Abre o teu link de configuração, ou vai a ⚙️ Definições → Avançado.</div>
     <div id="listBox"></div>
+  </section>
+  <section id="vLogin" hidden>
+    <div class="card" style="max-width:420px;margin:30px auto">
+      <h2>Entrar</h2>
+      <form id="loginForm">
+        <label class="fld"><span>Email</span><input id="lgEmail" type="email" autocomplete="username" required></label>
+        <label class="fld"><span>Password</span><input id="lgPass" type="password" autocomplete="current-password" required></label>
+        <button class="primary" style="width:100%">Entrar</button>
+      </form>
+      <div id="lgErr" class="alert err" style="margin-top:10px" hidden></div>
+      <p class="muted small">As contas são criadas pelo administrador.</p>
+    </div>
   </section>
   <section id="vEdit" hidden></section>
   <section id="vStats" hidden></section>
   <section id="vCar" hidden></section>
   <section id="vSettings" hidden>
     <div class="card">
+      <h2>Conta</h2>
+      <p id="meInfo" style="margin-top:0"></p>
+      <button id="btnLogout" style="width:100%">🚪 Terminar sessão</button>
+    </div>
+    <div class="card">
       <h2>Leitura das fotos</h2>
-      <p id="keyState" style="margin-top:0"></p>
       <label class="fld"><span>Modo de leitura</span>
         <select id="cfgModo">
           <option value="rapido">Rápido — lê outra vez só se os totais não baterem</option>
@@ -183,34 +200,37 @@
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="cfgCrop"> <span style="font-size:15px;color:var(--ink)">Recortar e rodar a foto antes de ler</span></label>
       <label class="fld"><span>IVA por defeito (%)</span><input id="cfgIva" inputmode="decimal" placeholder="23"></label>
       <details class="adv"><summary>Avançado</summary>
-        <label class="fld"><span>Chave da API do Gemini (grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>)</span>
-          <input id="cfgKey" type="password" autocomplete="off" placeholder="AIza…"></label>
-        <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="cfgShow"> <span>Mostrar chave</span></label>
-        <label class="fld"><span>Modelo</span><input id="cfgModel" list="models" placeholder="gemini-flash-latest"></label>
+        <label class="fld"><span>Modelo do Gemini</span><input id="cfgModel" list="models" placeholder="gemini-flash-latest"></label>
         <datalist id="models"><option value="gemini-flash-latest"><option value="gemini-flash-lite-latest"></datalist>
-        <button id="btnLink" style="width:100%">🔗 Criar link de configuração</button>
-        <div id="linkBox" hidden style="margin-top:8px">
-          <input id="linkOut" readonly>
-          <p class="muted small">Abre este link no telemóvel (ou noutro telemóvel) e a app fica configurada sozinha. O link contém a tua chave: <b>não o partilhes</b>.</p>
-        </div>
       </details>
       <button class="primary" id="cfgSave" style="width:100%;margin-top:6px">Guardar definições</button>
-      <p class="muted small">A chave fica guardada só neste telemóvel. No plano gratuito, o Google pode usar as imagens enviadas para melhorar os seus produtos.</p>
+      <p class="muted small">A leitura das fotos passa pelo servidor da app; a chave do Gemini não fica no telemóvel. No plano gratuito, o Google pode usar as imagens enviadas para melhorar os seus produtos.</p>
     </div>
     <div class="card">
-      <h2>Exportar e cópias</h2>
+      <h2>Exportar</h2>
       <button id="expXlsx" style="width:100%;margin-bottom:8px">📊 Exportar tudo para Excel</button>
-      <div class="row">
-        <button id="bkExport">💾 Cópia de segurança</button>
-        <label class="btn">📂 Restaurar<input type="file" id="bkImport" accept="application/json,.json" hidden></label>
+      <button id="bkExport" style="width:100%">💾 Cópia dos dados (JSON, sem fotos)</button>
+    </div>
+    <div class="card" id="adminUsers" hidden>
+      <h2>Utilizadores</h2>
+      <div id="usersBox"></div>
+      <p class="muted small">Para adicionar uma pessoa: Supabase → Authentication → Users → Add user (marca "Auto Confirm User"). Depois define aqui o perfil.</p>
+    </div>
+    <div class="card" id="adminClean" hidden>
+      <h2>Espaço e limpeza</h2>
+      <div id="spaceBox" class="small muted">A calcular o espaço usado…</div>
+      <div class="row" style="margin-top:12px;align-items:flex-end">
+        <label class="fld" style="margin:0"><span>Orçamentos anteriores a</span>
+          <select id="cleanYears"><option value="1">1 ano</option><option value="2">2 anos</option><option value="3">3 anos</option><option value="5" selected>5 anos</option><option value="7">7 anos</option><option value="10">10 anos</option></select></label>
+        <button id="btnCleanFind">🔎 Procurar</button>
       </div>
-      <p class="muted small">Os dados ficam só neste telemóvel. Faz uma cópia de segurança de vez em quando.</p>
+      <div id="cleanBox" style="margin-top:10px"></div>
     </div>
     <div class="card">
       <h2>App</h2>
       <p style="margin-top:0">Versão <b id="appVer"></b></p>
       <button id="btnUpdate">🔄 Procurar atualização</button>
-      <p class="muted small">A app procura sozinha uma versão nova sempre que é aberta. Os teus orçamentos não são apagados.</p>
+      <p class="muted small">A app procura sozinha uma versão nova sempre que é aberta.</p>
     </div>
   </section>
 </main>
@@ -251,7 +271,14 @@
 
 <script>
 'use strict';
-const APP_VERSION='2.2';
+const APP_VERSION='3.0';
+/* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
+const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
+const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
+const sb=window.supabase.createClient(SB_URL, SB_KEY);
+let me=null, perfisMap={};
+const isAdmin=()=>!!me && me.papel==='admin';
+const nomeDe=id=>(id && perfisMap[id] && (perfisMap[id].nome||perfisMap[id].email)) || '—';
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
 function h(tag, attrs, ...kids){
@@ -303,45 +330,96 @@ function busy(on, msg, ctl){
 }
 $('#busyCancel').onclick=()=>{ if (busyCtl) busyCtl.abort(); };
 
-/* ---------- definições ---------- */
+/* ---------- preferências locais ---------- */
 function getCfg(){ try{ return JSON.parse(localStorage.getItem('cfg')||'{}'); }catch{ return {}; } }
 function setCfg(c){ localStorage.setItem('cfg', JSON.stringify(c)); }
 
-/* ---------- base de dados (IndexedDB) ---------- */
-const STORE='docs';
-let _db;
-function idb(){
-  if (_db) return Promise.resolve(_db);
-  return new Promise((ok,ko)=>{
-    const r=indexedDB.open('orcamentos',1);
-    r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:'id'});
-    r.onsuccess=()=>{ _db=r.result; ok(_db); };
-    r.onerror=()=>ko(r.error);
-  });
+/* ---------- base de dados (Supabase) ---------- */
+let docsCache=null;
+const META_KEYS=['_cloud','validado','estado','pagoEm','validadoEm','validadoPor','aprovadoEm','aprovadoPor','pagoPor','criado','criadoPor','atualizado','atualizadoPor'];
+const NOT_DADOS=new Set(['id','fotos','data','matricula',...META_KEYS]);
+const ts=v=>v?Date.parse(v):null;
+const isoOrNull=v=>/^\d{4}-\d{2}-\d{2}$/.test(v||'')?v:null;
+function fromRow(r){
+  return migrate({...(r.dados||{}), id:r.id, fotos:(r.fotos||[]).map(path=>({path})), data:r.data, matricula:r.matricula,
+    validado:r.validado, estado:r.estado, pagoEm:r.pago_em, validadoEm:ts(r.validado_em), validadoPor:r.validado_por,
+    aprovadoEm:ts(r.aprovado_em), aprovadoPor:r.aprovado_por, pagoPor:r.pago_registado_por,
+    criado:ts(r.criado_em), criadoPor:r.criado_por, atualizado:ts(r.atualizado_em), atualizadoPor:r.atualizado_por, _cloud:true});
 }
-async function tx(mode, fn){
-  const db=await idb();
-  return new Promise((ok,ko)=>{
-    const t=db.transaction(STORE,mode); const req=fn(t.objectStore(STORE));
-    t.oncomplete=()=>ok(req ? req.result : undefined); t.onerror=()=>ko(t.error);
-  });
+function dadosOf(d){ const o={}; for (const [k,v] of Object.entries(d)) if (!NOT_DADOS.has(k)) o[k]=v; return o; }
+function applyMeta(d,row){ const f=fromRow(row); for (const k of META_KEYS) d[k]=f[k]; docsCache?.set(d.id,d); }
+function errMsg(e){ return (e && (e.message||e.error_description)) || String(e); }
+async function allDocs(force){
+  if (docsCache && !force) return [...docsCache.values()];
+  const {data,error}=await sb.from('orcamentos').select('*');
+  if (error) throw error;
+  docsCache=new Map(data.map(r=>[r.id,fromRow(r)]));
+  return [...docsCache.values()];
 }
-const dbAll=()=>tx('readonly',s=>s.getAll());
-const dbGet=id=>tx('readonly',s=>s.get(id));
-const dbPut=d=>tx('readwrite',s=>s.put(d));
-const dbDel=id=>tx('readwrite',s=>s.delete(id));
+async function dbGet(id){
+  if (docsCache?.has(id)) return docsCache.get(id);
+  const {data}=await sb.from('orcamentos').select('*').eq('id',id).maybeSingle();
+  if (!data) return null;
+  const d=fromRow(data); docsCache?.set(id,d); return d;
+}
+/* grava os dados do orçamento (o estado muda-se só com setStage) */
+async function dbPut(d){
+  const payload={dados:dadosOf(d), fotos:d.fotos.map(f=>f.path), data:isoOrNull(d.data), matricula:normPlate(d.matricula)||null};
+  const res = d._cloud
+    ? await sb.from('orcamentos').update(payload).eq('id',d.id).select().single()
+    : await sb.from('orcamentos').insert({id:d.id, ...payload}).select().single();
+  if (res.error) throw res.error;
+  applyMeta(d,res.data); return d;
+}
+async function setStage(d,patch){
+  const {data,error}=await sb.from('orcamentos').update(patch).eq('id',d.id).select().single();
+  if (error) throw error;
+  applyMeta(d,data);
+}
+async function dbDel(id){
+  const d=docsCache?.get(id) || await dbGet(id);
+  if (d && !d._cloud){ docsCache?.delete(id); return; }
+  const {error,count}=await sb.from('orcamentos').delete({count:'exact'}).eq('id',id);
+  if (error) throw error;
+  if (!count) throw new Error('Sem permissão para apagar este orçamento.');
+  if (d && d.fotos.length) await sb.storage.from('fotos').remove(d.fotos.map(f=>f.path));
+  docsCache?.delete(id);
+}
+function canDelete(d){
+  if (!d) return false;
+  if (!d._cloud) return true;
+  const st=status(d);
+  if (isAdmin()) return st!=='pago';
+  return d.criadoPor===me?.id && (st==='rever'||st==='naolido');
+}
+/* fotos no armazenamento privado "fotos" */
+const fotoCache=new Map();
+async function fotoBlob(f){
+  if (f.blob) return f.blob;
+  if (fotoCache.has(f.path)) return fotoCache.get(f.path);
+  const {data,error}=await sb.storage.from('fotos').download(f.path);
+  if (error) throw error;
+  fotoCache.set(f.path,data); return data;
+}
+async function uploadFoto(docId, blob){
+  const path=`${docId}/${uid()}.jpg`;
+  const {error}=await sb.storage.from('fotos').upload(path, blob, {contentType:'image/jpeg'});
+  if (error) throw error;
+  fotoCache.set(path,blob); return {path, blob};
+}
+async function removeFoto(f){ await sb.storage.from('fotos').remove([f.path]); fotoCache.delete(f.path); }
 /* orçamento sem nada preenchido (ex.: manual aberto e abandonado) */
 function isBlank(d){
   return !d.fotos.length && !['matricula','marca','modelo','kms','cliente','oficina','nipc','morada','assinatura','observacoes','mo_horas','mo_preco_hora','mo_total','material_escrito','total_escrito'].some(k=>d[k]!=null&&d[k]!=='')
     && !d.pecas.some(p=>(p.descricao||'').trim()||p.valor!=null) && !d.validado && d.estado==='orcamento';
 }
 function migrate(d){
-  if (!Array.isArray(d.fotos)){ d.fotos = d.foto ? [d.foto] : []; delete d.foto; }
+  if (!Array.isArray(d.fotos)) d.fotos=[];
   if (!d.estado) d.estado='orcamento';
   if (!Array.isArray(d.pecas)) d.pecas=[];
+  if (!d.criado) d.criado=Date.now();
   return d;
 }
-async function allDocs(){ return (await dbAll()).map(migrate); }
 
 /* ---------- imagem ---------- */
 function loadImg(blob){
@@ -387,7 +465,8 @@ const NUM_FIELDS=['mo_horas','mo_preco_hora','mo_total','material_escrito','tota
 const BUDGET={minimal:0, low:1024, medium:4096, high:8192};
 async function readSheet(blob, level, signal){
   const cfg=getCfg();
-  if (!cfg.key) throw new Error('Falta a chave da API do Gemini. Abre as Definições ⚙️.');
+  const {data:{session}}=await sb.auth.getSession();
+  if (!session) throw new Error('A sessão terminou. Entra outra vez na app.');
   const model=(cfg.model||'gemini-flash-latest').trim().replace(/^models\//,'');
   const b64=(await blobToDataURL(blob)).split(',')[1];
   // Gemini 3.x usa thinkingLevel; os 2.5 usam thinkingBudget. Tenta do mais adequado para o mais compatível.
@@ -395,10 +474,10 @@ async function readSheet(blob, level, signal){
   const call=async(tc)=>{
     const gc={temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA};
     if (tc) gc.thinkingConfig=tc;
-    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
+    const r=await fetch(`${SB_URL}/functions/v1/ler-folha`,{
       method:'POST', signal,
-      headers:{'Content-Type':'application/json','x-goog-api-key':cfg.key},
-      body:JSON.stringify({contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc})
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY},
+      body:JSON.stringify({model, body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
     });
     return {r, j: await r.json().catch(()=>({}))};
   };
@@ -411,7 +490,9 @@ async function readSheet(blob, level, signal){
   if (!r.ok){
     const m=(j.error&&j.error.message)||r.statusText;
     if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco.\n'+m);
-    if (r.status===400||r.status===403) throw new Error('A chave ou o modelo não foram aceites. Verifica as Definições.\n'+m);
+    if (r.status===401) throw new Error('A sessão terminou. Entra outra vez na app.');
+    if (r.status===404) throw new Error('A função "ler-folha" não foi encontrada no Supabase.');
+    if (r.status===400||r.status===403) throw new Error('O Gemini recusou o pedido (chave no servidor ou modelo).\n'+m);
     throw new Error(`Erro ${r.status}: ${m}`);
   }
   const c=j.candidates&&j.candidates[0];
@@ -433,10 +514,18 @@ function normPlate(s){
 const plateOk=s=>!!s && PLATE_RE.test(s);
 
 /* Memória de viaturas confirmadas: matrícula -> {marca, modelo} */
-function getCars(){ try{ return JSON.parse(localStorage.getItem('viaturas')||'{}'); }catch{ return {}; } }
+let carsCache={};
+async function loadCars(){
+  const {data}=await sb.from('viaturas').select('*');
+  carsCache=Object.fromEntries((data||[]).map(v=>[v.matricula,{marca:v.marca,modelo:v.modelo}]));
+}
+function getCars(){ return carsCache; }
 function rememberCar(d){
   const k=normPlate(d.matricula); if (!plateOk(k) || !(d.marca||d.modelo)) return;
-  const all=getCars(); all[k]={marca:d.marca||null, modelo:d.modelo||null}; localStorage.setItem('viaturas', JSON.stringify(all));
+  const v={marca:d.marca||null, modelo:d.modelo||null}, o=carsCache[k];
+  if (o && o.marca===v.marca && o.modelo===v.modelo) return;
+  carsCache[k]=v;
+  sb.from('viaturas').upsert({matricula:k, ...v, atualizado_em:new Date().toISOString()}).then(()=>{});
 }
 
 function normalize(x){
@@ -536,16 +625,17 @@ let view='vList', cur=null, curCar=null, statsLvl={y:null,m:null};
 let selecting=false, selected=new Set();
 function show(v){
   view=v;
-  for (const id of ['vList','vEdit','vStats','vCar','vSettings']) $('#'+id).hidden = id!==v;
+  for (const id of ['vLogin','vList','vEdit','vStats','vCar','vSettings']) $('#'+id).hidden = id!==v;
   const top=TABS.includes(v);
+  $('#btnRefresh').hidden = v!=='vList' || selecting;
   $('#nav').hidden=!top;
   $('#fab').hidden = !(v==='vList' && !selecting);
   $('#editBar').hidden = v!=='vEdit';
-  $('#btnBack').hidden = top && !(v==='vStats' && statsLvl.y);
+  $('#btnBack').hidden = v==='vLogin' || (top && !(v==='vStats' && statsLvl.y));
   $('#btnSelect').hidden = !(v==='vList' && !selecting);
   $('#btnCancelSel').hidden = !(v==='vList' && selecting);
-  $('#btnDel').hidden = !((v==='vList' && selecting) || (v==='vEdit' && cur && status(cur)!=='pago'));
-  $('#title').textContent = v==='vList' ? (selecting ? `${selected.size} selecionado(s)` : 'Orçamentos')
+  $('#btnDel').hidden = !((v==='vList' && selecting) || (v==='vEdit' && canDelete(cur)));
+  $('#title').textContent = v==='vLogin' ? 'Orçamentos Auto' : v==='vList' ? (selecting ? `${selected.size} selecionado(s)` : 'Orçamentos')
     : v==='vStats' ? 'Resumos' : v==='vSettings' ? 'Definições' : v==='vCar' ? '🚗 '+curCar : ((cur&&cur.matricula)||'Orçamento');
   if (v!=='vEdit') $('#saved').textContent='';
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on', b.dataset.v===v));
@@ -558,9 +648,10 @@ function go(st, replace){
   return route(st);
 }
 async function route(st){
+  if (!me) return showLogin();
   await flushSave();
   const prev=cur;
-  if (prev && (st.v!=='vEdit' || st.id!==prev.id) && isBlank(prev)) await dbDel(prev.id);
+  if (prev && (st.v!=='vEdit' || st.id!==prev.id) && isBlank(prev)){ try{ await dbDel(prev.id); }catch(e){} }
   if (cropCancel) cropCancel();
   closeViewer();
   const v=st.v||'vList';
@@ -597,8 +688,9 @@ function matchF(d){
   }
 }
 async function renderList(){
-  const docs=(await allDocs()).sort((a,b)=>docDate(b).localeCompare(docDate(a)) || b.criado-a.criado);
-  $('#noKeyMsg').hidden=!!getCfg().key;
+  let docs;
+  try{ docs=(await allDocs()).sort((a,b)=>docDate(b).localeCompare(docDate(a)) || b.criado-a.criado); }
+  catch(e){ $('#listBox').replaceChildren(h('div',{class:'alert err'},'Não consegui carregar os orçamentos: '+errMsg(e))); return; }
   $('#chips').replaceChildren(...FILTS.map(([k,l])=>h('button',{class:'chip-btn'+(filt===k?' on':''),onclick:()=>{ filt=k; renderList(); }},l)));
   const box=$('#listBox'); box.replaceChildren();
   if (!docs.length){ box.append(h('div',{class:'card muted'},'Ainda não tens orçamentos. Usa 📷 Foto, 🖼️ Galeria ou ✍️ Manual.')); return; }
@@ -643,13 +735,16 @@ $('#btnDel').onclick=async()=>{
   if (view==='vEdit') return delCur();
   if (!selected.size) return toast('Toca nos orçamentos que queres apagar.');
   const docs=(await allDocs()).filter(d=>selected.has(d.id));
-  const pagos=docs.filter(d=>status(d)==='pago'), del=docs.filter(d=>status(d)!=='pago');
-  if (!del.length) return toast('Orçamentos pagos estão finalizados e não podem ser apagados.');
-  if (!confirm(`Apagar ${del.length} orçamento(s)? Não dá para desfazer.`+(pagos.length?`\n\n${pagos.length} pago(s) ficam, porque estão finalizados.`:''))) return;
-  for (const d of del) await dbDel(d.id);
-  toast(`${del.length} orçamento(s) apagado(s).`); exitSelect();
+  const del=docs.filter(canDelete), fica=docs.length-del.length;
+  if (!del.length) return toast('Não tens permissão para apagar os orçamentos selecionados.');
+  if (!confirm(`Apagar ${del.length} orçamento(s)? Não dá para desfazer.`+(fica?`\n\n${fica} ficam (pagos, ou sem permissão para os apagar).`:''))) return;
+  busy(true,'A apagar…');
+  try{ for (const d of del) await dbDel(d.id); toast(`${del.length} orçamento(s) apagado(s).`); }
+  catch(e){ toast(errMsg(e)); } finally{ busy(false); }
+  exitSelect();
 };
 $('#q').addEventListener('input',e=>{ q=e.target.value.trim(); renderList(); });
+$('#btnRefresh').onclick=async()=>{ busy(true,'A atualizar…'); try{ await Promise.all([allDocs(true), loadCars(), loadPerfis()]); }catch(e){ toast(errMsg(e)); } busy(false); renderList(); };
 
 /* ---------- novos orçamentos ---------- */
 async function newFromPhoto(file){
@@ -658,13 +753,16 @@ async function newFromPhoto(file){
   try{ blob=await prepImage(file); }catch(e){ busy(false); return toast('Não consegui abrir a imagem.'); }
   busy(false);
   if (getCfg().crop!==false){ blob=await editPhoto(blob); if (!blob) return; }
-  const now=Date.now();
-  const d={id:uid(), criado:now, atualizado:now, fotos:[blob], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null};
+  const now=Date.now(), id=uid();
+  let foto;
+  busy(true,'A enviar a foto…');
+  try{ foto=await uploadFoto(id, blob); }catch(e){ busy(false); return toast('Não consegui enviar a foto: '+errMsg(e)); }
+  const d={id, criado:now, atualizado:now, fotos:[foto], pecas:[], iva_pct:parseNum(getCfg().iva)??23, estado:'orcamento', erro:null};
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
   try{ Object.assign(d, await readSmart(blob, ctl.signal)); }
   catch(e){ d.erro = e.name==='AbortError' ? 'Leitura cancelada. Preenche à mão, ou toca na foto → 📖 Ler esta foto.' : (e.message||String(e)); }
-  await dbPut(d);
+  try{ await dbPut(d); }catch(e){ busy(false); return toast('Não consegui guardar: '+errMsg(e)); }
   busy(false);
   openDoc(d);
 }
@@ -683,9 +781,11 @@ let saveT=null;
 function changed(){ renderSummary(); $('#saved').textContent='…'; clearTimeout(saveT); saveT=setTimeout(save,500); }
 async function save(){
   saveT=null; if (!cur) return;
-  cur.atualizado=Date.now(); if (cur.viaturaConfirmada) rememberCar(cur);
-  await dbPut(cur);
-  if (view==='vEdit'){ $('#saved').textContent='Guardado'; $('#title').textContent=cur.matricula||'Orçamento'; renderDupes(); }
+  if (cur.viaturaConfirmada) rememberCar(cur);
+  if (isLocked(cur)) return;
+  try{ await dbPut(cur); }
+  catch(e){ if (view==='vEdit') $('#saved').textContent='⚠️ Não guardado'; toast('Não foi possível guardar: '+errMsg(e)); return; }
+  if (view==='vEdit'){ $('#saved').textContent='Guardado'; $('#title').textContent=cur.matricula||'Orçamento'; renderDupes(); show('vEdit'); }
 }
 async function flushSave(){ if (saveT){ clearTimeout(saveT); await save(); } }
 
@@ -710,7 +810,7 @@ function renderEdit(){
   if (cur.notas_leitura) v.append(h('div',{class:'alert info'}, '🔎 '+cur.notas_leitura));
   if (cur.viaturaDaMemoria) v.append(h('div',{class:'alert info'}, '🚗 Marca e modelo preenchidos a partir de leituras anteriores desta matrícula.'));
   if (cur.matricula && !plateOk(cur.matricula)) v.append(h('div',{class:'alert warn'}, `⚠️ A matrícula "${cur.matricula}" não tem um formato português válido (ex.: 85-40-UQ). Confirma-a.`));
-  if (isLocked(cur)) v.append(h('div',{class:'alert info'}, status(cur)==='pago' ? '🔒 Orçamento pago e finalizado — só de leitura.' : '🔒 Valores bloqueados. Para alterar, usa ↩︎ Reabrir.'));
+  if (isLocked(cur)) v.append(h('div',{class:'alert info'}, status(cur)==='pago' ? '🔒 Orçamento pago e finalizado — só de leitura.' : (isAdmin() ? '🔒 Valores bloqueados. Para alterar, usa ↩︎ Reabrir.' : '🔒 Valores bloqueados. Só um administrador pode reabrir.')));
 
   const recalcMO=()=>{ const a=parseNum(cur.mo_horas), b=parseNum(cur.mo_preco_hora); if (a!=null&&b!=null){ cur.mo_total=r2(a*b); $('#moTotal').value=plain(cur.mo_total); } };
   const ivaChk=h('input',{type:'checkbox',checked:cur.iva_incluido,onchange:e=>{ cur.iva_incluido=e.target.checked; changed(); }});
@@ -744,7 +844,8 @@ function renderEdit(){
       field('Nome','oficina'), field('NIPC','nipc',{im:'numeric'}), field('Morada','morada'), field('Observações','observacoes',{area:true})),
     h('div',{class:'row'},
       h('button',{onclick:()=>exportXlsx([cur], `orcamento-${slug(cur.matricula)||'sem-matricula'}-${docDate(cur)}.xlsx`)},'📊 Exportar Excel'),
-      h('button',{class:'danger del-only',onclick:delCur},'🗑️ Apagar'))
+      h('button',{class:'danger del-only',onclick:delCur},'🗑️ Apagar')),
+    h('details',{class:'card fold',style:'margin-top:12px',ontoggle:e=>{ if (e.target.open) renderHist(); }}, h('summary',{},'Histórico'), h('div',{id:'histBox',class:'small'},'A carregar…'))
   );
   renderVal(); renderThumbs(); renderPecas(); renderSummary(); renderDupes(); applyLock();
 }
@@ -752,41 +853,62 @@ function applyLock(){
   const locked=isLocked(cur);
   document.querySelectorAll('#vEdit .card:not(#valCard) input, #vEdit .card:not(#valCard) textarea').forEach(e=>e.disabled=locked);
   document.querySelectorAll('#vEdit .edit-only').forEach(e=>e.hidden=locked);
-  document.querySelectorAll('#vEdit .del-only').forEach(e=>e.hidden=status(cur)==='pago');
+  document.querySelectorAll('#vEdit .del-only').forEach(e=>e.hidden=!canDelete(cur));
   $('#dupBox').hidden=locked;
 }
 
+async function renderHist(){
+  const box=$('#histBox'); if (!box || !cur) return;
+  if (!cur._cloud){ box.textContent='Ainda não foi guardado.'; return; }
+  const {data,error}=await sb.from('historico').select('*').eq('orcamento_id',cur.id).order('em');
+  if (error){ box.textContent=errMsg(error); return; }
+  box.replaceChildren(...(data.length ? data.map(x=>h('div',{style:'padding:4px 0;border-bottom:1px solid var(--line)'},
+    h('b',{},nomeDe(x.por)),' ',x.acao,' ',h('span',{class:'muted'},'· '+new Date(x.em).toLocaleString('pt-PT',{dateStyle:'short',timeStyle:'short'}))))
+    : [h('span',{class:'muted'},'Sem registos.')]));
+}
 function renderVal(){
   const b=$('#valCard'); if (!b) return; b.replaceChildren();
   const st=status(cur), i=Math.max(0,STAGES.indexOf(st));
   const dt=ts=>ts?new Date(ts).toLocaleDateString('pt-PT'):'';
   b.append(h('div',{class:'steps'}, ...['A validar','Validado','Aprovado','Pago'].map((l,k)=>
     h('div',{class:'step'+(k<i||(k===3&&i===3)?' done':k===i?' now':'')}, h('span',{class:'dot'},k<i||(k===3&&i===3)?'✓':String(k+1)), h('span',{},l)))));
+  const adm=isAdmin();
   if (i===0) b.append(h('div',{class:'valrow'}, h('span',{},'Revê os valores e confirma.'), h('button',{class:'primary',onclick:validar},'✓ Validar')));
-  if (i===1) b.append(h('div',{class:'valrow'}, h('span',{class:'small muted'},`Validado em ${dt(cur.validadoEm)}.`), h('button',{class:'primary',onclick:aprovar},'👍 Aprovar')));
-  if (i===2){
+  if (i===1) b.append(h('div',{class:'valrow'}, h('span',{class:'small muted'},`Validado por ${nomeDe(cur.validadoPor)} em ${dt(cur.validadoEm)}.`),
+    adm ? h('button',{class:'primary',onclick:aprovar},'👍 Aprovar') : h('span',{class:'small'},'⏳ Aguarda aprovação')));
+  if (i===2 && !adm) b.append(h('div',{class:'small muted'}, `Aprovado por ${nomeDe(cur.aprovadoPor)} em ${dt(cur.aprovadoEm)||'—'}. ⏳ Aguarda pagamento.`));
+  if (i===2 && adm){
     const inp=h('input',{type:'date'}); inp.value=todayISO();
-    b.append(h('div',{class:'small muted',style:'margin-bottom:8px'}, `Aprovado em ${dt(cur.aprovadoEm)||'—'}.`),
+    b.append(h('div',{class:'small muted',style:'margin-bottom:8px'}, `Aprovado por ${nomeDe(cur.aprovadoPor)} em ${dt(cur.aprovadoEm)||'—'}.`),
       h('div',{class:'valrow',style:'align-items:flex-end'}, h('label',{class:'fld',style:'margin:0;flex:1'}, h('span',{},'Data do pagamento'), inp),
         h('button',{class:'primary',onclick:()=>pagar(inp.value)},'💶 Pago')));
   }
-  if (i===3) b.append(h('div',{class:'valrow ok'}, h('span',{},`🔒 Pago em ${fmtDate(cur.pagoEm)||'—'} — finalizado`)));
-  if (i>0) b.append(h('div',{style:'text-align:right;margin-top:6px'}, h('button',{class:'linkbtn',onclick:reabrir},'↩︎ Reabrir')));
+  if (i===3) b.append(h('div',{class:'valrow ok'}, h('span',{},`🔒 Pago em ${fmtDate(cur.pagoEm)||'—'} — finalizado`)), h('div',{class:'small muted'},`Registado por ${nomeDe(cur.pagoPor)}.`));
+  if (i>0 && adm) b.append(h('div',{style:'text-align:right;margin-top:6px'}, h('button',{class:'linkbtn',onclick:reabrir},'↩︎ Reabrir')));
 }
-function afterStage(msg){ changed(); renderEdit(); show('vEdit'); toast(msg); }
+async function stageTo(patch, msg){
+  busy(true,'A gravar…');
+  try{
+    await flushSave();
+    if (!cur._cloud) await dbPut(cur);
+    await setStage(cur, patch);
+    renderEdit(); show('vEdit'); toast(msg);
+  }catch(e){ toast(errMsg(e)); }
+  finally{ busy(false); }
+}
 function validar(){
   const c=calc(cur);
   if (c.avisos.length && !confirm('Os totais não batem com a folha:\n\n'+c.avisos.join('\n')+'\n\nValidar mesmo assim?')) return;
-  cur.validado=true; cur.validadoEm=Date.now(); afterStage('Orçamento validado.');
+  stageTo({validado:true}, 'Orçamento validado.');
 }
 function aprovar(){
   if (!confirm('Aprovar este orçamento?')) return;
-  cur.estado='aprovado'; cur.aprovadoEm=Date.now(); afterStage('Orçamento aprovado.');
+  stageTo({estado:'aprovado'}, 'Orçamento aprovado.');
 }
 function pagar(date){
   if (!date) return toast('Escolhe a data do pagamento.');
   if (!confirm(`Marcar como pago em ${fmtDate(date)}?\n\nO orçamento fica finalizado e deixa de poder ser alterado ou apagado.`)) return;
-  cur.estado='pago'; cur.pagoEm=date; afterStage('Orçamento pago e finalizado.');
+  stageTo({estado:'pago', pago_em:date}, 'Orçamento pago e finalizado.');
 }
 function reabrir(){
   const st=status(cur);
@@ -794,24 +916,26 @@ function reabrir(){
     : st==='aprovado' ? 'Reabrir volta o orçamento a "Validado" (deixa de estar aprovado). Continuar?'
     : 'Reabrir volta o orçamento a "A validar" e desbloqueia os valores para edição. Continuar?';
   if (!confirm(msg)) return;
-  if (st==='pago'){ cur.estado='aprovado'; cur.pagoEm=null; }
-  else if (st==='aprovado'){ cur.estado='orcamento'; cur.aprovadoEm=null; cur.validado=true; }
-  else { cur.validado=false; cur.validadoEm=null; }
-  cur.reaberto=(cur.reaberto||0)+1;
-  afterStage('Orçamento reaberto.');
+  const patch = st==='pago' ? {estado:'aprovado'} : st==='aprovado' ? {estado:'orcamento', validado:true} : {validado:false};
+  stageTo(patch, 'Orçamento reaberto.');
 }
 
 const thumbURLs=[];
 function renderThumbs(){
   const t=$('#thumbs'); thumbURLs.splice(0).forEach(u=>URL.revokeObjectURL(u)); t.replaceChildren();
   if (!cur.fotos.length){ t.append(h('p',{class:'muted',style:'margin:0'},'Sem fotos.')); return; }
-  cur.fotos.forEach((b,i)=>{ const u=URL.createObjectURL(b); thumbURLs.push(u); t.append(h('img',{src:u,alt:'Foto '+(i+1),onclick:()=>openViewer(i)})); });
+  cur.fotos.forEach((f,i)=>{
+    const img=h('img',{alt:'Foto '+(i+1),onclick:()=>openViewer(i),style:'width:80px;background:var(--bg)'}); t.append(img);
+    fotoBlob(f).then(b=>{ const u=URL.createObjectURL(b); thumbURLs.push(u); img.src=u; img.style.width=''; }).catch(()=>{ img.alt='⚠️'; });
+  });
 }
 async function addPhotoInput(e){
   const f=e.target.files[0]; e.target.value=''; if (!f) return;
   let b; try{ b=await prepImage(f); }catch{ return toast('Não consegui abrir a imagem.'); }
   if (getCfg().crop!==false){ b=await editPhoto(b); if (!b) return; }
-  cur.fotos.push(b); renderThumbs(); changed();
+  busy(true,'A enviar a foto…');
+  try{ cur.fotos.push(await uploadFoto(cur.id, b)); }catch(e){ busy(false); return toast('Não consegui enviar a foto: '+errMsg(e)); }
+  busy(false); renderThumbs(); changed();
   toast('Foto anexada. Toca nela para a ler com o Gemini.');
 }
 async function readPhoto(i){
@@ -819,7 +943,7 @@ async function readPhoto(i){
   closeViewer();
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
-  try{ Object.assign(cur, await readSmart(cur.fotos[i], ctl.signal), {erro:null, validado:false, validadoEm:null}); await save(); renderEdit(); toast('Folha lida.'); }
+  try{ Object.assign(cur, await readSmart(await fotoBlob(cur.fotos[i]), ctl.signal), {erro:null}); await dbPut(cur); renderEdit(); show('vEdit'); toast('Folha lida.'); }
   catch(e){ toast(e.name==='AbortError' ? 'Leitura cancelada.' : (e.message||String(e))); }
   finally{ busy(false); }
 }
@@ -869,25 +993,27 @@ async function renderDupes(){
   box.append(h('div',{class:'alert warn'},
     `⚠️ Parece repetido: já existe um orçamento de ${o.matricula} de ${fmtDate(o.data)} com o mesmo total (${money(calc(o).total)}).`,
     h('div',{class:'row',style:'margin-top:8px'},
-      h('button',{onclick:async()=>{ if (!confirm('Apagar o orçamento antigo e ficar com este?')) return; for (const x of ds) await dbDel(x.id); toast('Orçamento antigo apagado.'); renderDupes(); }},'Substituir o antigo'),
+      h('button',{onclick:async()=>{ if (!confirm('Apagar o orçamento antigo e ficar com este?')) return; try{ for (const x of ds) await dbDel(x.id); toast('Orçamento antigo apagado.'); }catch(e){ toast(errMsg(e)); } renderDupes(); }},'Substituir o antigo'),
       h('button',{onclick:()=>{ cur.dupIgnorados=[...(cur.dupIgnorados||[]),...ds.map(x=>x.id)]; changed(); renderDupes(); }},'Não é repetido'),
       h('button',{onclick:()=>openDoc(o)},'Ver o outro'))));
 }
 
 async function delCur(){
-  if (status(cur)==='pago') return toast('Orçamento pago está finalizado e não pode ser apagado. Reabre-o primeiro.');
+  if (!canDelete(cur)) return toast(status(cur)==='pago' ? 'Orçamento pago está finalizado e não pode ser apagado.' : 'Não tens permissão para apagar este orçamento.');
   if (!confirm('Apagar este orçamento? Não dá para desfazer.')) return;
   clearTimeout(saveT); saveT=null;
-  await dbDel(cur.id); cur=null; toast('Orçamento apagado.');
+  try{ await dbDel(cur.id); }catch(e){ return toast(errMsg(e)); }
+  cur=null; toast('Orçamento apagado.');
   history.back();
 }
 
 /* ---------- visualizador de fotos (zoom com dois dedos) ---------- */
 let vIdx=0, vURL=null, vt={s:1,x:0,y:0};
 function applyVT(){ $('#vImg').style.transform=`translate(${vt.x}px,${vt.y}px) scale(${vt.s})`; }
-function openViewer(i){
+async function openViewer(i){
   vIdx=i; if (vURL) URL.revokeObjectURL(vURL);
-  vURL=URL.createObjectURL(cur.fotos[i]); $('#vImg').src=vURL;
+  let b; try{ b=await fotoBlob(cur.fotos[i]); }catch(e){ return toast('Não consegui abrir a foto: '+errMsg(e)); }
+  vURL=URL.createObjectURL(b); $('#vImg').src=vURL;
   vt={s:1,x:0,y:0}; applyVT(); $('#viewer').hidden=false;
   for (const b of ['#vRead','#vCrop','#vDel']) $(b).hidden=isLocked(cur);
 }
@@ -916,8 +1042,18 @@ function closeViewer(){ $('#viewer').hidden=true; }
 })();
 $('#vClose').onclick=closeViewer;
 $('#vRead').onclick=()=>readPhoto(vIdx);
-$('#vCrop').onclick=async()=>{ const b=await editPhoto(cur.fotos[vIdx]); if (!b) return; cur.fotos[vIdx]=b; openViewer(vIdx); renderThumbs(); changed(); };
-$('#vDel').onclick=()=>{ if (!confirm('Remover esta foto do orçamento?')) return; cur.fotos.splice(vIdx,1); closeViewer(); renderThumbs(); changed(); };
+$('#vCrop').onclick=async()=>{
+  const b=await editPhoto(await fotoBlob(cur.fotos[vIdx])); if (!b) return;
+  busy(true,'A enviar a foto…');
+  try{ const old=cur.fotos[vIdx]; cur.fotos[vIdx]=await uploadFoto(cur.id,b); await dbPut(cur); removeFoto(old).catch(()=>{}); }
+  catch(e){ toast(errMsg(e)); } finally{ busy(false); }
+  openViewer(vIdx); renderThumbs();
+};
+$('#vDel').onclick=async()=>{
+  if (!confirm('Remover esta foto do orçamento?')) return;
+  const [old]=cur.fotos.splice(vIdx,1); closeViewer(); renderThumbs();
+  try{ await dbPut(cur); await removeFoto(old); }catch(e){ toast(errMsg(e)); }
+};
 
 /* ---------- recortar e rodar ---------- */
 let cropCancel=null;
@@ -1091,10 +1227,10 @@ async function exportXlsx(docs, name){
     const wb=X.utils.book_new();
     const orc=docs.map(d=>{ const c=calc(d); return [xlSerial(docDate(d)),d.matricula||'',d.marca||'',d.modelo||'',d.kms||'',d.oficina||'',d.nipc||'',d.assinatura||'',
       STATUS_TXT[status(d)],d.estado==='pago'&&d.pagoEm?xlSerial(d.pagoEm):'',c.material,parseNum(d.mo_horas)??'',c.mo,c.base,c.iva,c.total,
-      d.material_escrito??'',d.total_escrito??'',c.avisos.join(' ')]; });
+      d.material_escrito??'',d.total_escrito??'',c.avisos.join(' '),d.validadoPor?nomeDe(d.validadoPor):'',d.aprovadoPor?nomeDe(d.aprovadoPor):'',d.pagoPor?nomeDe(d.pagoPor):'']; });
     X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Marca','Modelo','Kms','Oficina','NIPC','Mecânico','Estado','Pago em','Peças','Horas','Mão de obra',
-      'Total s/ IVA','IVA','Total c/ IVA','Material escrito','Total escrito','Avisos'], orc, {0:D,9:D,10:E,12:E,13:E,14:E,15:E,16:E,17:E},
-      [11,10,12,12,9,28,12,14,11,11,11,7,12,12,10,12,12,12,40]), 'Orçamentos');
+      'Total s/ IVA','IVA','Total c/ IVA','Material escrito','Total escrito','Avisos','Validado por','Aprovado por','Pagamento registado por'], orc, {0:D,9:D,10:E,12:E,13:E,14:E,15:E,16:E,17:E},
+      [11,10,12,12,9,28,12,14,11,11,11,7,12,12,10,12,12,12,40,16,16,16]), 'Orçamentos');
     const pec=[]; for (const d of docs) for (const p of d.pecas) pec.push([xlSerial(docDate(d)),d.matricula||'',d.oficina||'',p.descricao||'',p.quantidade??'',p.valor??'',p.riscado?'Sim':'']);
     X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Oficina','Peça','Qtd','Valor','Excluída'], pec, {0:D,5:E}, [11,10,28,34,6,11,9]), 'Peças');
     if (docs.length>1){
@@ -1112,60 +1248,143 @@ async function exportXlsx(docs, name){
 }
 $('#expXlsx').onclick=async()=>exportXlsx(await allDocs(), `orcamentos-${todayISO()}.xlsx`);
 
-/* ---------- cópia de segurança ---------- */
+/* ---------- cópia dos dados ---------- */
 $('#bkExport').onclick=async()=>{
-  busy(true,'A preparar a cópia…');
-  try{
-    const out=[]; for (const d of await allDocs()) out.push({...d, fotos: await Promise.all(d.fotos.map(blobToDataURL))});
-    deliver(`orcamentos-copia-${todayISO()}.json`, new Blob([JSON.stringify({app:'orcamentos-auto',versao:2,docs:out,viaturas:getCars()})],{type:'application/json'}));
-  } finally { busy(false); }
+  const docs=(await allDocs()).map(d=>({...dadosOf(d), id:d.id, data:d.data, matricula:d.matricula, estado:STATUS_TXT[status(d)],
+    fotos:d.fotos.map(f=>f.path), validado_por:d.validadoPor?nomeDe(d.validadoPor):null, aprovado_por:d.aprovadoPor?nomeDe(d.aprovadoPor):null, pago_em:d.pagoEm||null}));
+  deliver(`orcamentos-dados-${todayISO()}.json`, new Blob([JSON.stringify({app:'orcamentos-auto',versao:3,exportado:new Date().toISOString(),docs},null,1)],{type:'application/json'}));
 };
-$('#bkImport').addEventListener('change', async e=>{
-  const f=e.target.files[0]; e.target.value=''; if (!f) return;
-  busy(true,'A restaurar…');
+
+/* ---------- administração: utilizadores, espaço e limpeza ---------- */
+async function loadPerfis(){
+  const {data}=await sb.from('perfis').select('*');
+  perfisMap=Object.fromEntries((data||[]).map(p=>[p.id,p]));
+  if (me && perfisMap[me.id]) me=perfisMap[me.id];
+}
+function renderUsers(){
+  const box=$('#usersBox'); box.replaceChildren();
+  for (const p of Object.values(perfisMap).sort((a,b)=>(a.nome||'').localeCompare(b.nome||''))){
+    const sel=h('select',{style:'max-width:150px'}, h('option',{value:'admin'},'Administrador'), h('option',{value:'utilizador'},'Utilizador'));
+    sel.value=p.papel;
+    sel.onchange=async()=>{
+      if (p.id===me.id && sel.value!=='admin' && !confirm('Vais deixar de ser administrador. Continuar?')){ sel.value=p.papel; return; }
+      const {error}=await sb.from('perfis').update({papel:sel.value}).eq('id',p.id);
+      if (error){ toast(errMsg(error)); sel.value=p.papel; return; }
+      p.papel=sel.value; if (p.id===me.id) me.papel=sel.value; toast('Perfil atualizado.'); fillSettings();
+    };
+    box.append(h('div',{class:'grow',style:'cursor:default'}, h('div',{class:'main'}, h('div',{class:'t'},p.nome||p.email), h('div',{class:'s'},p.email||'')), sel));
+  }
+}
+const mb=b=>(b/1048576).toLocaleString('pt-PT',{maximumFractionDigits:1})+' MB';
+async function renderSpace(){
+  const box=$('#spaceBox');
+  const {data,error}=await sb.rpc('espaco_usado');
+  if (error){ box.textContent='Não consegui calcular o espaço: '+errMsg(error); return; }
+  const bar=(used,max)=>{ const pct=Math.min(100,used/max*100); return h('div',{style:'height:8px;background:var(--bg);border-radius:4px;overflow:hidden;margin:4px 0 10px'},
+    h('div',{style:`height:100%;width:${pct}%;background:${pct>85?'var(--err)':pct>65?'var(--warn)':'var(--ok)'}`})); };
+  box.replaceChildren(
+    h('div',{},`Base de dados: ${mb(data.base_dados_bytes)} de 500 MB`), bar(data.base_dados_bytes, 500*1048576),
+    h('div',{},`Fotos: ${mb(data.fotos_bytes)} de 1 GB`), bar(data.fotos_bytes, 1024*1048576));
+}
+let cleanSel=new Set();
+$('#btnCleanFind').onclick=async()=>{
+  const years=+$('#cleanYears').value, cut=new Date(); cut.setFullYear(cut.getFullYear()-years);
+  const cutISO=cut.toISOString().slice(0,10);
+  let docs;
+  try{ docs=(await allDocs(true)).filter(d=>docDate(d)<cutISO).sort((a,b)=>docDate(a).localeCompare(docDate(b))); }
+  catch(e){ return toast(errMsg(e)); }
+  cleanSel=new Set(docs.map(d=>d.id));
+  renderClean(docs, cutISO);
+};
+function renderClean(docs, cutISO){
+  const box=$('#cleanBox'); box.replaceChildren();
+  if (!docs.length){ box.append(h('p',{class:'muted'},`Não há orçamentos anteriores a ${fmtDate(cutISO)}.`)); return; }
+  const byStage=groupBy(docs,status);
+  const nFotos=docs.filter(d=>cleanSel.has(d.id)).reduce((a,d)=>a+d.fotos.length,0);
+  box.append(
+    h('p',{style:'margin:0 0 6px'}, `${docs.length} orçamento(s) anteriores a ${fmtDate(cutISO)} · ${cleanSel.size} selecionado(s) · ${nFotos} foto(s)`),
+    h('div',{class:'chips',style:'margin-bottom:8px'},
+      h('button',{class:'chip-btn',onclick:()=>{ cleanSel=new Set(docs.map(d=>d.id)); renderClean(docs,cutISO); }},'Todos'),
+      h('button',{class:'chip-btn',onclick:()=>{ cleanSel.clear(); renderClean(docs,cutISO); }},'Nenhum'),
+      ...[...byStage].map(([st,g])=>h('button',{class:'chip-btn',onclick:()=>{ cleanSel=new Set(g.map(d=>d.id)); renderClean(docs,cutISO); }},`Só ${STATUS_TXT[st]} (${g.length})`))),
+    h('div',{style:'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:0 10px'},
+      ...docs.map(d=>{ const cb=h('input',{type:'checkbox',checked:cleanSel.has(d.id),style:'flex:none'});
+        cb.onchange=()=>{ cb.checked?cleanSel.add(d.id):cleanSel.delete(d.id); renderClean(docs,cutISO); };
+        return h('label',{class:'grow',style:'cursor:pointer'}, cb, h('div',{class:'main'}, h('div',{class:'t'},[fmtDate(docDate(d)),d.matricula].filter(Boolean).join(' · ')||'Sem matrícula'),
+          h('div',{class:'s'}, [STATUS[status(d)], d.oficina, d.fotos.length?`${d.fotos.length} foto(s)`:null].filter(Boolean).join(' · '))), h('div',{class:'v small'},money(calc(d).total))); })),
+    h('div',{class:'row',style:'margin-top:10px'},
+      h('button',{onclick:()=>exportXlsx(docs.filter(d=>cleanSel.has(d.id)), `orcamentos-antes-de-${cutISO}.xlsx`)},'📊 Exportar primeiro'),
+      h('button',{onclick:()=>cleanPhotos(docs.filter(d=>cleanSel.has(d.id)))},'🖼️ Apagar só as fotos'),
+      h('button',{class:'danger',onclick:()=>cleanDocs(docs.filter(d=>cleanSel.has(d.id)))},'🗑️ Apagar orçamentos')));
+}
+async function cleanPhotos(list){
+  list=list.filter(d=>d.fotos.length);
+  if (!list.length) return toast('Os selecionados não têm fotos.');
+  const n=list.reduce((a,d)=>a+d.fotos.length,0);
+  if (!confirm(`Apagar ${n} foto(s) de ${list.length} orçamento(s)? Os dados dos orçamentos ficam. Não dá para desfazer.`)) return;
+  busy(true,'A apagar fotos…'); let ok=0;
   try{
-    const j=JSON.parse(await f.text());
-    if (!j || !Array.isArray(j.docs)) throw new Error('Ficheiro inválido');
-    for (const d of j.docs){
-      if (!d.id) continue;
-      const fotos = Array.isArray(d.fotos) ? d.fotos : (d.foto ? [d.foto] : []);
-      d.fotos = await Promise.all(fotos.filter(Boolean).map(dataURLToBlob)); delete d.foto;
-      await dbPut(migrate(d));
+    for (const d of list){
+      const {error}=await sb.from('orcamentos').update({fotos:[]}).eq('id',d.id);
+      if (error) throw error;
+      await sb.storage.from('fotos').remove(d.fotos.map(f=>f.path)); d.fotos=[]; ok++;
     }
-    if (j.viaturas) localStorage.setItem('viaturas', JSON.stringify({...getCars(), ...j.viaturas}));
-    toast(`${j.docs.length} orçamento(s) restaurado(s).`);
-  }catch(err){ toast('Não consegui ler a cópia: '+err.message); }
-  finally{ busy(false); }
-});
+  }catch(e){ toast(errMsg(e)); }
+  busy(false); toast(`Fotos apagadas em ${ok} orçamento(s).`); renderSpace(); $('#btnCleanFind').click();
+}
+async function cleanDocs(list){
+  if (!list.length) return toast('Nada selecionado.');
+  const pagos=list.filter(d=>status(d)==='pago').length;
+  if (!confirm(`Apagar ${list.length} orçamento(s) e as suas fotos?`+(pagos?`\n\nInclui ${pagos} pago(s).`:'')+'\n\nNão dá para desfazer. Se ainda não exportaste, cancela e usa "Exportar primeiro".')) return;
+  busy(true,'A apagar…'); let ok=0;
+  for (const d of list){ try{ await dbDel(d.id); ok++; }catch(e){} }
+  busy(false); toast(`${ok} de ${list.length} orçamento(s) apagado(s).`); renderSpace(); $('#btnCleanFind').click();
+}
 
 /* ---------- definições ---------- */
 function fillSettings(){
   const c=getCfg();
-  $('#keyState').textContent = c.key ? '✅ Chave do Gemini configurada.' : '⚠️ Falta a chave do Gemini — abre o teu link de configuração, ou preenche-a em Avançado.';
-  $('#cfgKey').value=c.key||''; $('#cfgModel').value=c.model||''; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
-  $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false; $('#linkBox').hidden=true;
+  $('#meInfo').replaceChildren(h('b',{},me?.nome||''), ' · ', me?.email||'', h('br'), h('span',{class:'muted small'}, isAdmin()?'Administrador':'Utilizador'));
+  $('#cfgModel').value=c.model||''; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
+  $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false;
+  $('#adminUsers').hidden=$('#adminClean').hidden=!isAdmin();
+  if (isAdmin()){ renderUsers(); renderSpace(); $('#cleanBox').replaceChildren(); }
 }
-$('#cfgShow').onchange=e=>{ $('#cfgKey').type=e.target.checked?'text':'password'; };
 $('#cfgSave').onclick=()=>{
-  setCfg({...getCfg(), key:$('#cfgKey').value.trim(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked});
-  fillSettings(); toast('Definições guardadas.');
+  setCfg({...getCfg(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked});
+  toast('Definições guardadas.');
 };
-$('#btnLink').onclick=async()=>{
-  const key=$('#cfgKey').value.trim()||getCfg().key;
-  if (!key) return toast('Preenche primeiro a chave.');
-  const link=location.origin+location.pathname+'#chave='+encodeURIComponent(key);
-  $('#linkOut').value=link; $('#linkBox').hidden=false;
-  try{ await navigator.clipboard.writeText(link); toast('Link copiado.'); }catch{ $('#linkOut').select(); }
-};
+$('#btnLogout').onclick=async()=>{ if (!confirm('Terminar sessão?')) return; await flushSave(); await sb.auth.signOut(); };
 
 /* ---------- arranque ---------- */
 $('#appVer').textContent=APP_VERSION;
-(function(){
-  const m=/^#chave=(.+)$/.exec(location.hash);
-  if (m){ setCfg({...getCfg(), key:decodeURIComponent(m[1]).trim()}); setTimeout(()=>toast('✅ App configurada: chave do Gemini guardada.'),300); }
-})();
-history.replaceState({v:'vList'},'','#list');
-route({v:'vList'});
+function showLogin(){
+  me=null; docsCache=null; cur=null; selecting=false;
+  history.replaceState({v:'vLogin'},'','#entrar');
+  show('vLogin'); $('#nav').hidden=true; $('#fab').hidden=true;
+}
+async function boot(session){
+  busy(true,'A carregar…');
+  try{
+    await loadPerfis();
+    me=perfisMap[session.user.id] || {id:session.user.id, email:session.user.email, nome:session.user.email, papel:'utilizador'};
+    await Promise.all([loadCars(), allDocs(true)]);
+  }catch(e){ toast('Erro a ligar à cloud: '+errMsg(e)); }
+  busy(false);
+  history.replaceState({v:'vList'},'','#list');
+  route({v:'vList'});
+}
+$('#loginForm').addEventListener('submit', async e=>{
+  e.preventDefault(); $('#lgErr').hidden=true;
+  busy(true,'A entrar…');
+  const {data,error}=await sb.auth.signInWithPassword({email:$('#lgEmail').value.trim(), password:$('#lgPass').value});
+  busy(false);
+  if (error){ $('#lgErr').textContent = /invalid/i.test(error.message) ? 'Email ou password errados.' : errMsg(error); $('#lgErr').hidden=false; return; }
+  $('#lgPass').value=''; boot(data.session);
+});
+sb.auth.onAuthStateChange((ev)=>{ if (ev==='SIGNED_OUT') showLogin(); });
+sb.auth.getSession().then(({data:{session}})=> session ? boot(session) : showLogin());
+document.addEventListener('visibilitychange',()=>{ if (!document.hidden && me && view==='vList' && !selecting) allDocs(true).then(renderList).catch(()=>{}); });
 if ('serviceWorker' in navigator){
   const hadCtrl=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
