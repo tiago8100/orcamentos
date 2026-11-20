@@ -145,6 +145,20 @@
   .cbar.top{padding:12px 14px;color:#ddd;font-size:15px}
   .cbar button.primary{background:var(--accent);border-color:var(--accent)}
   #cropCv{flex:1;width:100%;touch-action:none;display:block;min-height:0}
+  #lock{position:fixed;inset:0;z-index:40;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;padding:20px}
+  .lockbox{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;gap:10px}
+  .lockicon{font-size:40px}
+  #lockTitle{font-size:18px;font-weight:600}
+  .pindots{display:flex;gap:14px;height:18px;margin:6px 0}
+  .pindots span{width:14px;height:14px;border-radius:50%;border:2px solid #fff}
+  .pindots span.on{background:#fff}
+  .keypad{display:grid;grid-template-columns:repeat(3,72px);gap:14px;margin:8px 0}
+  .keypad button{width:72px;height:72px;border-radius:50%;font-size:26px;background:rgba(255,255,255,.12);border:0;color:#fff}
+  .keypad button:active{background:rgba(255,255,255,.3)}
+  .lockbox .lnk{background:transparent;border:0;color:#fff;text-decoration:underline;font-size:15px;padding:6px}
+  .modal{position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center}
+  .modal .sheet{background:var(--card);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + var(--safe))}
+  .modal .sheet h2{margin:0 0 12px;font-size:18px}
   [hidden]{display:none!important}
   #toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + 80px + var(--safe));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:30;max-width:90%;text-align:center}
   #toast.show{opacity:1}
@@ -207,8 +221,13 @@
       <p class="muted small">A leitura das fotos passa pelo servidor da app; a chave do Gemini não fica no telemóvel. No plano gratuito, o Google pode usar as imagens enviadas para melhorar os seus produtos.</p>
     </div>
     <div class="card">
+      <h2>Bloqueio da app</h2>
+      <div id="lockBox"></div>
+    </div>
+    <div class="card">
       <h2>Exportar</h2>
-      <button id="expXlsx" style="width:100%;margin-bottom:8px">📊 Exportar tudo para Excel</button>
+      <button id="expXlsx" class="primary" style="width:100%;margin-bottom:8px">📊 Exportar / enviar Excel…</button>
+      <label class="fld"><span>Email habitual para envio (opcional, usado se a partilha não estiver disponível)</span><input id="cfgEmail" type="email" placeholder="ex.: contabilidade@empresa.pt"></label>
       <button id="bkExport" style="width:100%">💾 Cópia dos dados (JSON, sem fotos)</button>
     </div>
     <div class="card" id="adminUsers" hidden>
@@ -266,12 +285,39 @@
     <button id="cOk" class="primary">✓ Continuar</button>
   </div>
 </div>
+<div id="lock" hidden>
+  <div class="lockbox">
+    <div class="lockicon">🔒</div>
+    <div id="lockTitle">Introduz o PIN</div>
+    <div class="pindots" id="pinDots"></div>
+    <div id="lockErr" class="small" style="color:#ffd2d2;min-height:18px;text-align:center"></div>
+    <div class="keypad" id="keypad"></div>
+    <button id="lockBio" class="lnk">👆 Usar impressão digital</button>
+    <button id="lockForgot" class="lnk">Esqueci o PIN</button>
+    <button id="lockCancel" class="lnk">Cancelar</button>
+  </div>
+</div>
+<div id="expModal" class="modal" hidden>
+  <div class="sheet">
+    <h2>📊 Exportar Excel</h2>
+    <label class="fld"><span>Período</span>
+      <select id="exPer"><option value="tudo">Tudo</option><option value="mes">Este mês</option><option value="mesant">Mês anterior</option><option value="ano">Este ano</option><option value="anoant">Ano anterior</option><option value="custom">Escolher datas…</option></select></label>
+    <div class="grid2" id="exDates" hidden><label class="fld"><span>De</span><input type="date" id="exDe"></label><label class="fld"><span>Até</span><input type="date" id="exAte"></label></div>
+    <div class="fld"><span>Estados</span><div class="chips" id="exEst"></div></div>
+    <div class="grid2"><label class="fld"><span>Viatura</span><select id="exCar"></select></label><label class="fld"><span>Oficina</span><select id="exOf"></select></label></div>
+    <label class="fld"><span>Mecânico</span><select id="exMec"></select></label>
+    <p id="exCount" class="muted" style="margin:4px 0 12px"></p>
+    <div class="row"><button id="exDl" class="primary">⬇️ Descarregar</button><button id="exMail">📧 Partilhar / email</button></div>
+    <p class="muted small">O Excel inclui um resumo, gráficos (por mês, peças vs mão de obra, por mecânico e por viatura) e tabelas com filtros e totais.</p>
+    <button id="exClose" style="width:100%">Fechar</button>
+  </div>
+</div>
 <div id="busy" hidden><div class="spinner"></div><p id="busyMsg"></p><button id="busyCancel" hidden>✕ Cancelar</button></div>
 <div id="toast"></div>
 
 <script>
 'use strict';
-const APP_VERSION='3.0.2';
+const APP_VERSION='3.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -691,7 +737,7 @@ async function route(st){
   const prev=cur;
   if (prev && (st.v!=='vEdit' || st.id!==prev.id) && isBlank(prev)){ try{ await dbDel(prev.id); }catch(e){} }
   if (cropCancel) cropCancel();
-  closeViewer();
+  closeViewer(); $('#expModal').hidden=true;
   const v=st.v||'vList';
   if (v!=='vList' && selecting){ selecting=false; selected.clear(); }
   if (v==='vEdit'){
@@ -885,7 +931,8 @@ function renderEdit(){
     fold('Oficina',
       field('Nome','oficina'), field('NIPC','nipc',{im:'numeric'}), field('Morada','morada'), field('Observações','observacoes',{area:true})),
     h('div',{class:'row'},
-      h('button',{onclick:()=>exportXlsx([cur], `orcamento-${slug(cur.matricula)||'sem-matricula'}-${docDate(cur)}.xlsx`)},'📊 Exportar Excel'),
+      h('button',{onclick:()=>exportXlsx([cur], `orcamento-${slug(cur.matricula)||'sem-matricula'}-${docDate(cur)}.xlsx`, {periodo:`orçamento ${cur.matricula||''} de ${fmtDate(docDate(cur))}`})},'📊 Excel'),
+      h('button',{onclick:e=>shareXlsx([cur], `orcamento-${slug(cur.matricula)||'sem-matricula'}-${docDate(cur)}.xlsx`, {periodo:`orçamento ${cur.matricula||''} de ${fmtDate(docDate(cur))}`}, e.currentTarget)},'📧 Enviar'),
       h('button',{class:'danger del-only',onclick:delCur},'🗑️ Apagar')),
     h('details',{class:'card fold',style:'margin-top:12px',ontoggle:e=>{ if (e.target.open) renderHist(); }}, h('summary',{},'Histórico'), h('div',{id:'histBox',class:'small'},'A carregar…'))
   );
@@ -1177,7 +1224,7 @@ async function renderCar(){
         h('div',{class:'chips'}, chip(STATUS[st],'st-'+st))),
       h('div',{class:'v'}, money(calc(d).total))));
   }
-  v.append(h('div',{class:'mhead'},h('span',{},'Visitas'),h('span',{})), ul);
+  v.append(h('button',{style:'width:100%;margin-bottom:12px',onclick:()=>openExport({car:curCar})},'📊 Exportar / enviar esta viatura'), h('div',{class:'mhead'},h('span',{},'Visitas'),h('span',{})), ul);
 }
 
 /* ---------- resumos por ano / mês / dia ---------- */
@@ -1203,7 +1250,9 @@ async function renderStats(){
   v.append(h('label',{class:'small muted',style:'display:flex;gap:8px;align-items:center;margin-bottom:10px'}, cb, 'Contar só validados, aprovados e pagos'));
   if (!sel.length){ v.append(h('div',{class:'card muted'},'Sem orçamentos neste período.')); return; }
 
-  v.append(card(m ? `${MESES[+m-1]} ${y}` : (y || 'Todos os anos'), kpis(agg(sel))));
+  const per = m ? {de:`${y}-${m}-01`, ate:new Date(Date.UTC(+y,+m,0)).toISOString().slice(0,10)} : y ? {de:`${y}-01-01`, ate:`${y}-12-31`} : {};
+  v.append(card(m ? `${MESES[+m-1]} ${y}` : (y || 'Todos os anos'), kpis(agg(sel)),
+    h('button',{style:'width:100%;margin-top:10px',onclick:()=>openExport(per)},'📊 Exportar / enviar este período')));
 
   const key = !y ? d=>docDate(d).slice(0,4) : !m ? d=>docDate(d).slice(5,7) : d=>docDate(d);
   const label = !y ? k=>k : !m ? k=>MESES[+k-1] : k=>fmtDate(k);
@@ -1242,56 +1291,234 @@ async function renderStats(){
   v.append(card('Por oficina', table(['Oficina','Orç.','Total'], ofs.map(([k,x])=>[k,x.n,money(x.total)]))));
 }
 
-/* ---------- exportar para Excel ---------- */
-async function loadXlsx(){
-  if (window.XLSX) return window.XLSX;
-  await new Promise((ok,ko)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-    s.onload=ok; s.onerror=()=>{ s.remove(); ko(new Error('Sem ligação à internet para preparar o Excel.')); }; document.head.append(s); });
-  return window.XLSX;
-}
-function xlSerial(iso){ const [y,m,d]=iso.split('-').map(Number); return (Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000; }
-function xlSheet(X, head, rows, fmts, widths){
-  const ws=X.utils.aoa_to_sheet([head,...rows]);
-  if (rows.length) for (let R=1; R<=rows.length; R++) for (const [C,z] of Object.entries(fmts)){
-    const a=X.utils.encode_cell({r:R,c:+C}); if (ws[a] && ws[a].t==='n') ws[a].z=z; }
-  ws['!cols']=widths.map(w=>({wch:w}));
-  if (rows.length) ws['!autofilter']={ref:ws['!ref']};
-  return ws;
+/* ---------- exportar para Excel (ExcelJS + gráficos) ---------- */
+const XLSX_MIME='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const libs={};
+function loadLib(url, global){
+  if (window[global]) return Promise.resolve(window[global]);
+  if (!libs[url]) libs[url]=new Promise((ok,ko)=>{ const s=document.createElement('script'); s.src=url;
+    s.onload=()=>ok(window[global]); s.onerror=()=>{ s.remove(); delete libs[url]; ko(new Error('Sem ligação à internet para preparar o Excel.')); }; document.head.append(s); });
+  return libs[url];
 }
 function deliver(name, blob){
   const a=h('a',{href:URL.createObjectURL(blob),download:name}); document.body.append(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),10000);
 }
-async function exportXlsx(docs, name){
-  if (!docs.length) return toast('Não há orçamentos para exportar.');
-  await flushSave();
-  busy(true,'A preparar o Excel…');
-  try{
-    const X=await loadXlsx(), E='#,##0.00 "€"', D='dd/mm/yyyy';
-    docs=[...docs].sort((a,b)=>docDate(a).localeCompare(docDate(b)));
-    const wb=X.utils.book_new();
-    const orc=docs.map(d=>{ const c=calc(d); return [xlSerial(docDate(d)),d.matricula||'',d.marca||'',d.modelo||'',d.kms||'',d.oficina||'',d.nipc||'',d.assinatura||'',
-      STATUS_TXT[status(d)],d.estado==='pago'&&d.pagoEm?xlSerial(d.pagoEm):'',c.material,parseNum(d.mo_horas)??'',c.mo,c.base,c.iva,c.total,
-      d.material_escrito??'',d.total_escrito??'',c.avisos.join(' '),d.validadoPor?nomeDe(d.validadoPor):'',d.aprovadoPor?nomeDe(d.aprovadoPor):'',d.pagoPor?nomeDe(d.pagoPor):'']; });
-    X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Marca','Modelo','Kms','Oficina','NIPC','Mecânico','Estado','Pago em','Peças','Horas','Mão de obra',
-      'Total s/ IVA','IVA','Total c/ IVA','Material escrito','Total escrito','Avisos','Validado por','Aprovado por','Pagamento registado por'], orc, {0:D,9:D,10:E,12:E,13:E,14:E,15:E,16:E,17:E},
-      [11,10,12,12,9,28,12,14,11,11,11,7,12,12,10,12,12,12,40,16,16,16]), 'Orçamentos');
-    const pec=[]; for (const d of docs) for (const p of d.pecas) pec.push([xlSerial(docDate(d)),d.matricula||'',d.oficina||'',p.descricao||'',p.quantidade??'',p.valor??'',p.riscado?'Sim':'']);
-    X.utils.book_append_sheet(wb, xlSheet(X,['Data','Matrícula','Oficina','Peça','Qtd','Valor','Excluída'], pec, {0:D,5:E}, [11,10,28,34,6,11,9]), 'Peças');
-    if (docs.length>1){
-      const men=[...groupBy(docs,d=>docDate(d).slice(0,7))].sort((a,b)=>a[0].localeCompare(b[0])).map(([k,g])=>{ const a=agg(g);
-        return [+k.slice(0,4),MESES[+k.slice(5,7)-1],a.n,a.pecas,a.horas,a.mo,a.base,a.iva,a.total]; });
-      X.utils.book_append_sheet(wb, xlSheet(X,['Ano','Mês','Orçamentos','Peças','Horas','Mão de obra','Total s/ IVA','IVA','Total c/ IVA'], men, {3:E,5:E,6:E,7:E,8:E}, [6,11,11,12,7,12,12,10,12]), 'Resumo mensal');
-      const mec=[...groupBy(docs,d=>(d.assinatura||'—').trim())].map(([k,g])=>{ const a=agg(g); return [k,a.n,a.horas,a.mo,a.total]; });
-      X.utils.book_append_sheet(wb, xlSheet(X,['Mecânico','Orçamentos','Horas','Mão de obra','Total c/ IVA'], mec, {3:E,4:E}, [18,11,7,12,12]), 'Mecânicos');
-    }
-    const out=X.write(wb,{bookType:'xlsx',type:'array'});
-    busy(false);
-    deliver(name, new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    toast('Excel transferido.');
-  }catch(e){ busy(false); toast(e.message||String(e)); }
+const xmlEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const utcDate=iso=>{ const [y,m,d]=iso.split('-').map(Number); return new Date(Date.UTC(y,m-1,d)); };
+const colL=n=>{ let s=''; for (n++; n>0; n=Math.floor((n-1)/26)) s=String.fromCharCode(65+(n-1)%26)+s; return s; };
+const STATUS_FILL={naolido:'FFFDE8E8', rever:'FFFFF4DD', validado:'FFE8F1FB', aprovado:'FFEFE7FB', pago:'FFE3F5EA'};
+
+/* Uma série de gráfico de barras em XML (DrawingML) */
+function chartSeries(i, sheet, col, name, cats, vals, color){
+  const sq=`'${sheet.replace(/'/g,"''")}'`, n=cats.length;
+  const nameCell=`$${col}$1`, catRange=`$A$2:$A$${n+1}`, valRange=`$${col}$2:$${col}$${n+1}`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>
+<c:tx><c:strRef><c:f>${xmlEsc(sq)}!${nameCell}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEsc(name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr><c:invertIfNegative val="0"/>
+<c:cat><c:strRef><c:f>${xmlEsc(sq)}!${catRange}</c:f><c:strCache><c:ptCount val="${cats.length}"/>${cats.map((c,k)=>`<c:pt idx="${k}"><c:v>${xmlEsc(c)}</c:v></c:pt>`).join('')}</c:strCache></c:strRef></c:cat>
+<c:val><c:numRef><c:f>${xmlEsc(sq)}!${valRange}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${vals.map((v,k)=>`<c:pt idx="${k}"><c:v>${v}</c:v></c:pt>`).join('')}</c:numCache></c:numRef></c:val></c:ser>`;
 }
-$('#expXlsx').onclick=async()=>exportXlsx(await allDocs(), `orcamentos-${todayISO()}.xlsx`);
+function chartXml({title, horizontal, stacked, series}){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<c:roundedCorners val="0"/>
+<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1300" b="1"/></a:pPr><a:r><a:rPr lang="pt-PT" sz="1300" b="1"/><a:t>${xmlEsc(title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>
+<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>
+<c:barChart><c:barDir val="${horizontal?'bar':'col'}"/><c:grouping val="${stacked?'stacked':'clustered'}"/><c:varyColors val="0"/>
+${series}
+<c:gapWidth val="70"/>${stacked?'<c:overlap val="100"/>':''}<c:axId val="5001"/><c:axId val="5002"/></c:barChart>
+<c:catAx><c:axId val="5001"/><c:scaling><c:orientation val="${horizontal?'maxMin':'minMax'}"/></c:scaling><c:delete val="0"/><c:axPos val="${horizontal?'l':'b'}"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="5002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>
+<c:valAx><c:axId val="5002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${horizontal?'b':'l'}"/><c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="DDDDDD"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="#,##0 &quot;€&quot;" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="5001"/><c:crosses val="${horizontal?'max':'autoZero'}"/><c:crossBetween val="between"/></c:valAx>
+</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
+}
+/* Acrescenta os gráficos à folha "Gráficos" do ficheiro gerado pelo ExcelJS */
+async function injectCharts(buf, charts){
+  if (!charts.length) return buf;
+  const JSZip=await loadLib('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js','JSZip');
+  const zip=await JSZip.loadAsync(buf);
+  const put=(n,d)=>zip.file(n,d,{createFolders:false});
+  const wbXml=await zip.file('xl/workbook.xml').async('string');
+  const rid=(wbXml.match(/<sheet [^>]*name="Gráficos"[^>]*r:id="([^"]+)"/)||wbXml.match(/<sheet [^>]*r:id="([^"]+)"[^>]*name="Gráficos"/)||[])[1];
+  const rels=await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const target=(rels.match(new RegExp(`<Relationship [^>]*Id="${rid}"[^>]*Target="([^"]+)"`))||rels.match(new RegExp(`<Relationship [^>]*Target="([^"]+)"[^>]*Id="${rid}"`))||[])[1];
+  if (!target) return buf;
+  const sheetPath='xl/'+target.replace(/^\/?xl\//,''), sheetName=sheetPath.split('/').pop();
+  let sx=await zip.file(sheetPath).async('string');
+  if (!/xmlns:r=/.test(sx)) sx=sx.replace('<worksheet ','<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+  sx=sx.replace('</worksheet>','<drawing r:id="rIdGraf1"/></worksheet>');
+  put(sheetPath, sx);
+  const srPath=`xl/worksheets/_rels/${sheetName}.rels`;
+  const relDraw='<Relationship Id="rIdGraf1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>';
+  const sr=zip.file(srPath) ? (await zip.file(srPath).async('string')).replace('</Relationships>', relDraw+'</Relationships>')
+    : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relDraw}</Relationships>`;
+  put(srPath, sr);
+  const H=20, anchors=charts.map((c,i)=>`<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${2+i*(H+1)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>10</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${2+i*(H+1)+H}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i+2}" name="Gráfico ${i+1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdC${i+1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`).join('');
+  put('xl/drawings/drawing1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${anchors}</xdr:wsDr>`);
+  put('xl/drawings/_rels/drawing1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${charts.map((c,i)=>`<Relationship Id="rIdC${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${i+1}.xml"/>`).join('')}</Relationships>`);
+  charts.forEach((c,i)=>put(`xl/charts/chart${i+1}.xml`, chartXml(c)));
+  let ct=await zip.file('[Content_Types].xml').async('string');
+  ct=ct.replace('</Types>', '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+    + charts.map((c,i)=>`<Override PartName="/xl/charts/chart${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('') + '</Types>');
+  put('[Content_Types].xml', ct);
+  return zip.generateAsync({type:'uint8array', compression:'DEFLATE'});
+}
+
+/* Constrói o Excel: Resumo, Gráficos, Orçamentos, Peças, Mensal, Mecânicos, Viaturas */
+async function buildXlsx(docs, desc={}){
+  const ExcelJS=await loadLib('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js','ExcelJS');
+  const E='#,##0.00 "€"', D='dd/mm/yyyy';
+  docs=[...docs].sort((a,b)=>docDate(a).localeCompare(docDate(b)));
+  const wb=new ExcelJS.Workbook(); wb.creator='Orçamentos Auto'; wb.created=new Date();
+  const headStyle=ws=>{ const r=ws.getRow(1); r.height=22; r.eachCell(c=>{ c.font={bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1F3A5F'}}; c.alignment={vertical:'middle',wrapText:true}; }); };
+  function table(name, cols, rows, {totals=[], fills}={}){
+    const ws=wb.addWorksheet(name, {views:[{state:'frozen', ySplit:1}]});
+    ws.columns=cols.map(c=>({header:c.h, key:c.k, width:c.w, style:c.f?{numFmt:c.f}:{}}));
+    rows.forEach((r,i)=>{ const row=ws.addRow(r); if (fills) fills(row,i); });
+    headStyle(ws);
+    if (rows.length){
+      ws.autoFilter={from:{row:1,column:1}, to:{row:1,column:cols.length}};
+      if (totals.length){
+        const tr=ws.addRow({}); tr.getCell(1).value='Total (filtrado)';
+        for (const k of totals){ const ci=cols.findIndex(c=>c.k===k)+1, L=colL(ci-1);
+          tr.getCell(ci).value={formula:`SUBTOTAL(9,${L}2:${L}${rows.length+1})`, result:r2(rows.reduce((a,r)=>a+(+r[k]||0),0))}; }
+        tr.eachCell(c=>{ c.font={bold:true}; c.border={top:{style:'thin'}}; });
+      }
+    }
+    return ws;
+  }
+  // Resumo
+  const a=agg(docs), rs=wb.addWorksheet('Resumo');
+  rs.columns=[{width:26},{width:40}];
+  rs.addRow(['Orçamentos Auto — exportação']).font={bold:true,size:14,color:{argb:'FF1F3A5F'}};
+  rs.addRow(['Gerado em', new Date().toLocaleString('pt-PT')]);
+  if (desc.filtros) for (const [k,v] of desc.filtros) rs.addRow([k,v]);
+  rs.addRow([]);
+  for (const [k,v,f] of [['Orçamentos',a.n],['Total c/ IVA',a.total,E],['Total s/ IVA',a.base,E],['IVA',a.iva,E],['Peças',a.pecas,E],['Mão de obra',a.mo,E],['Horas',a.horas]]){
+    const r=rs.addRow([k,v]); r.getCell(1).font={bold:true}; if (f) r.getCell(2).numFmt=f; r.getCell(2).alignment={horizontal:'left'};
+  }
+  const gs=wb.addWorksheet('Gráficos'); gs.getCell('A1').value='Gráficos'; gs.getCell('A1').font={bold:true,size:14,color:{argb:'FF1F3A5F'}};
+  // Orçamentos
+  table('Orçamentos', [
+    {h:'Data',k:'data',w:11,f:D},{h:'Matrícula',k:'mat',w:11},{h:'Marca',k:'marca',w:12},{h:'Modelo',k:'modelo',w:12},{h:'Kms',k:'kms',w:9},
+    {h:'Oficina',k:'of',w:28},{h:'NIPC',k:'nipc',w:12},{h:'Mecânico',k:'mec',w:14},{h:'Estado',k:'est',w:11},{h:'Pago em',k:'pago',w:11,f:D},
+    {h:'Peças',k:'pecas',w:11,f:E},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total s/ IVA',k:'base',w:12,f:E},{h:'IVA',k:'iva',w:10,f:E},
+    {h:'Total c/ IVA',k:'total',w:12,f:E},{h:'Material escrito',k:'me',w:12,f:E},{h:'Total escrito',k:'te',w:12,f:E},{h:'Avisos',k:'av',w:40},
+    {h:'Validado por',k:'vp',w:16},{h:'Aprovado por',k:'ap',w:16},{h:'Pagamento registado por',k:'pp',w:16}],
+    docs.map(d=>{ const c=calc(d); return {data:utcDate(docDate(d)), mat:d.matricula||'', marca:d.marca||'', modelo:d.modelo||'', kms:d.kms||'', of:d.oficina||'', nipc:d.nipc||'',
+      mec:d.assinatura||'', est:STATUS_TXT[status(d)], pago:d.estado==='pago'&&isoOrNull(d.pagoEm)?utcDate(d.pagoEm):null, pecas:c.material, horas:parseNum(d.mo_horas), mo:c.mo, base:c.base, iva:c.iva, total:c.total,
+      me:d.material_escrito??null, te:d.total_escrito??null, av:c.avisos.join(' '), vp:d.validadoPor?nomeDe(d.validadoPor):'', ap:d.aprovadoPor?nomeDe(d.aprovadoPor):'', pp:d.pagoPor?nomeDe(d.pagoPor):''}; }),
+    {totals:['pecas','horas','mo','base','iva','total'], fills:(row,i)=>{ row.getCell(9).fill={type:'pattern',pattern:'solid',fgColor:{argb:STATUS_FILL[status(docs[i])]}}; }});
+  // Peças
+  const pec=[]; for (const d of docs) for (const p of d.pecas) pec.push({data:utcDate(docDate(d)), mat:d.matricula||'', of:d.oficina||'', peca:p.descricao||'', qtd:p.quantidade??null, valor:p.riscado?null:(p.valor??null), exc:p.riscado?'Sim':'', vexc:p.riscado?(p.valor??null):null});
+  table('Peças', [{h:'Data',k:'data',w:11,f:D},{h:'Matrícula',k:'mat',w:11},{h:'Oficina',k:'of',w:26},{h:'Peça',k:'peca',w:34},{h:'Qtd',k:'qtd',w:6},{h:'Valor',k:'valor',w:11,f:E},{h:'Excluída',k:'exc',w:9},{h:'Valor excluído',k:'vexc',w:12,f:E}],
+    pec, {totals:['qtd','valor'], fills:(row,i)=>{ if (pec[i].exc) row.font={color:{argb:'FF8A8A8A'},strike:true}; }});
+  // Mensal
+  const months=[...groupBy(docs,d=>docDate(d).slice(0,7))].sort((x,y)=>x[0].localeCompare(y[0]));
+  const men=months.map(([k,g])=>{ const x=agg(g); return {mes:`${MESES[+k.slice(5,7)-1].slice(0,3)} ${k.slice(0,4)}`, n:x.n, pecas:x.pecas, horas:x.horas, mo:x.mo, base:x.base, iva:x.iva, total:x.total}; });
+  table('Mensal', [{h:'Mês',k:'mes',w:11},{h:'Orçamentos',k:'n',w:11},{h:'Peças',k:'pecas',w:12,f:E},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total s/ IVA',k:'base',w:12,f:E},{h:'IVA',k:'iva',w:10,f:E},{h:'Total c/ IVA',k:'total',w:12,f:E}], men, {totals:['n','pecas','horas','mo','base','iva','total']});
+  // Mecânicos
+  const mec=[...groupBy(docs,d=>(d.assinatura||'—').trim())].map(([k,g])=>{ const x=agg(g); return {mec:k, n:x.n, horas:x.horas, mo:x.mo, total:x.total}; }).sort((x,y)=>y.total-x.total);
+  table('Mecânicos', [{h:'Mecânico',k:'mec',w:18},{h:'Orçamentos',k:'n',w:11},{h:'Horas',k:'horas',w:7},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total c/ IVA',k:'total',w:12,f:E}], mec, {totals:['n','horas','mo','total']});
+  // Viaturas
+  const car=[...groupBy(docs,d=>normPlate(d.matricula)||'—')].map(([k,g])=>{ const x=agg(g), l=g[g.length-1]; return {mat:k, vi:[l.marca,l.modelo].filter(Boolean).join(' '), n:x.n, pecas:x.pecas, mo:x.mo, total:x.total}; }).sort((x,y)=>y.total-x.total);
+  table('Viaturas', [{h:'Matrícula',k:'mat',w:11},{h:'Viatura',k:'vi',w:20},{h:'Orçamentos',k:'n',w:11},{h:'Peças',k:'pecas',w:12,f:E},{h:'Mão de obra',k:'mo',w:12,f:E},{h:'Total c/ IVA',k:'total',w:12,f:E}], car, {totals:['n','pecas','mo','total']});
+
+  const buf=await wb.xlsx.writeBuffer();
+  const charts=[];
+  if (men.length){
+    const cats=men.map(x=>x.mes);
+    charts.push({title:'Total c/ IVA por mês', series:chartSeries(0,'Mensal','H','Total c/ IVA',cats,men.map(x=>x.total),'2F6FB3')});
+    charts.push({title:'Peças e mão de obra por mês', stacked:true, series:
+      chartSeries(0,'Mensal','C','Peças',cats,men.map(x=>x.pecas),'2F6FB3')+
+      chartSeries(1,'Mensal','E','Mão de obra',cats,men.map(x=>x.mo),'F2A93B')});
+  }
+  if (mec.length) charts.push({title:'Total por mecânico', horizontal:true, series:chartSeries(0,'Mecânicos','E','Total c/ IVA',mec.map(x=>x.mec),mec.map(x=>x.total),'1D7A46')});
+  const topCar=car.slice(0,15);
+  if (topCar.length) charts.push({title:'Total por viatura'+(car.length>15?' (top 15)':''), horizontal:true, series:chartSeries(0,'Viaturas','F','Total c/ IVA',topCar.map(x=>x.mat),topCar.map(x=>x.total),'7A4FB3')});
+  return new Blob([await injectCharts(buf, charts)], {type:XLSX_MIME});
+}
+async function exportXlsx(docs, name, desc){
+  if (!docs.length) return toast('Não há orçamentos para exportar.');
+  await flushSave(); busy(true,'A preparar o Excel…');
+  try{ const blob=await buildXlsx(docs, desc); busy(false); deliver(name, blob); toast('Excel transferido.'); }
+  catch(e){ busy(false); toast(errMsg(e)); }
+}
+
+/* ---------- enviar por email (partilha do telemóvel) ---------- */
+let pendingShare=null;
+async function shareXlsx(docs, name, desc={}, btn){
+  if (!docs.length) return toast('Não há orçamentos para enviar.');
+  const periodo=desc.periodo||'orçamentos';
+  const subject=`Orçamentos Auto — ${periodo}`;
+  const text=`Segue em anexo o Excel dos orçamentos (${periodo}): ${docs.length} orçamento(s), total ${money(agg(docs).total)} com IVA.`;
+  let file;
+  if (pendingShare && pendingShare.name===name) file=pendingShare.file;
+  else {
+    await flushSave(); busy(true,'A preparar o Excel…');
+    try{ file=new File([await buildXlsx(docs, desc)], name, {type:XLSX_MIME}); }catch(e){ busy(false); return toast(errMsg(e)); }
+    busy(false);
+  }
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:subject, text}); pendingShare=null; if (btn) btn.textContent=btn.dataset.label; return; }
+    catch(e){
+      if (e.name==='AbortError'){ pendingShare=null; return; }
+      if (e.name==='NotAllowedError'){ // o Excel demorou a preparar: falta um toque para abrir a partilha
+        pendingShare={name,file}; if (btn){ btn.dataset.label=btn.dataset.label||btn.textContent; btn.textContent='📧 Toca para partilhar'; }
+        return toast('Excel pronto. Toca outra vez em "Partilhar" para escolher o email.');
+      }
+    }
+  }
+  deliver(name, file);
+  const to=getCfg().email||'';
+  location.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text+'\n\n(Anexa o ficheiro '+name+', que foi transferido para o telemóvel.)')}`;
+}
+
+/* ---------- painel de exportação com filtros ---------- */
+let exSel=new Set(['rever','validado','aprovado','pago']);
+const EX_ST=[['rever','A validar'],['validado','Validado'],['aprovado','Aprovado'],['pago','Pago']];
+function exRange(){
+  const v=$('#exPer').value, t=new Date(), y=t.getFullYear(), m=t.getMonth();
+  const iso=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  if (v==='mes') return [iso(new Date(y,m,1)), iso(new Date(y,m+1,0)), `${MESES[m]} ${y}`];
+  if (v==='mesant') return [iso(new Date(y,m-1,1)), iso(new Date(y,m,0)), `${MESES[(m+11)%12]} ${m?y:y-1}`];
+  if (v==='ano') return [`${y}-01-01`, `${y}-12-31`, String(y)];
+  if (v==='anoant') return [`${y-1}-01-01`, `${y-1}-12-31`, String(y-1)];
+  if (v==='custom'){ const de=$('#exDe').value, ate=$('#exAte').value; return [de||'0000-01-01', ate||'9999-12-31', `${de?fmtDate(de):'início'} a ${ate?fmtDate(ate):'hoje'}`]; }
+  return ['0000-01-01','9999-12-31','todos os períodos'];
+}
+async function exFiltered(){
+  const [de,ate,periodo]=exRange(), car=$('#exCar').value, of=$('#exOf').value, mec=$('#exMec').value;
+  const list=(await allDocs()).filter(d=>{ const dd=docDate(d), st=status(d)==='naolido'?'rever':status(d);
+    return dd>=de && dd<=ate && exSel.has(st) && (!car||normPlate(d.matricula)===car) && (!of||(d.oficina||'').trim()===of) && (!mec||(d.assinatura||'').trim()===mec); });
+  const filtros=[['Período',periodo],['Estados',EX_ST.filter(([k])=>exSel.has(k)).map(x=>x[1]).join(', ')]];
+  if (car) filtros.push(['Viatura',car]); if (of) filtros.push(['Oficina',of]); if (mec) filtros.push(['Mecânico',mec]);
+  const fname=`orcamentos-${slug(periodo.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''))||'export'}${car?'-'+slug(car):''}.xlsx`;
+  return {list, desc:{periodo, filtros}, fname};
+}
+async function exCount(){
+  const {list}=await exFiltered();
+  $('#exCount').textContent = list.length ? `${list.length} orçamento(s) · ${money(agg(list).total)} com IVA` : 'Nenhum orçamento com estes filtros.';
+  pendingShare=null; const b=$('#exMail'); if (b.dataset.label) b.textContent=b.dataset.label;
+}
+async function openExport(preset={}){
+  const docs=await allDocs();
+  const opts=(sel,vals,all)=>{ $(sel).replaceChildren(h('option',{value:''},all), ...[...new Set(vals.filter(Boolean))].sort().map(v=>h('option',{value:v},v))); };
+  opts('#exCar', docs.map(d=>plateOk(normPlate(d.matricula))?normPlate(d.matricula):null), 'Todas as viaturas');
+  opts('#exOf', docs.map(d=>(d.oficina||'').trim()), 'Todas as oficinas');
+  opts('#exMec', docs.map(d=>(d.assinatura||'').trim()), 'Todos os mecânicos');
+  $('#exPer').value=preset.de?'custom':'tudo'; $('#exDe').value=preset.de||''; $('#exAte').value=preset.ate||''; $('#exDates').hidden=!preset.de;
+  if (preset.car) $('#exCar').value=preset.car;
+  exSel=new Set(['rever','validado','aprovado','pago']); renderExSt();
+  $('#expModal').hidden=false; exCount();
+}
+function renderExSt(){ $('#exEst').replaceChildren(...EX_ST.map(([k,l])=>h('button',{type:'button',class:'chip-btn'+(exSel.has(k)?' on':''),onclick:()=>{ exSel.has(k)?exSel.delete(k):exSel.add(k); renderExSt(); exCount(); }},l))); }
+$('#exPer').onchange=()=>{ $('#exDates').hidden=$('#exPer').value!=='custom'; exCount(); };
+for (const id of ['#exDe','#exAte','#exCar','#exOf','#exMec']) $(id).onchange=exCount;
+$('#exClose').onclick=()=>{ $('#expModal').hidden=true; };
+$('#exDl').onclick=async()=>{ const {list,desc,fname}=await exFiltered(); exportXlsx(list,fname,desc); };
+$('#exMail').onclick=async e=>{ const btn=e.currentTarget; const {list,desc,fname}=await exFiltered(); shareXlsx(list,fname,desc,btn); };
+$('#expXlsx').onclick=()=>openExport();
 
 /* ---------- cópia dos dados ---------- */
 $('#bkExport').onclick=async()=>{
@@ -1391,20 +1618,141 @@ function fillSettings(){
   const c=getCfg();
   $('#meInfo').replaceChildren(h('b',{},me?.nome||''), ' · ', me?.email||'', h('br'), h('span',{class:'muted small'}, isAdmin()?'Administrador':'Utilizador'));
   $('#cfgModel').value=c.model||''; $('#cfgIva').value=c.iva!=null?plain(c.iva):'';
-  $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false;
+  $('#cfgModo').value=c.modo||'rapido'; $('#cfgCrop').checked=c.crop!==false; $('#cfgEmail').value=c.email||'';
+  renderLockSettings();
   $('#adminUsers').hidden=$('#adminClean').hidden=!isAdmin();
   if (isAdmin()){ renderUsers(); renderSpace(); $('#cleanBox').replaceChildren(); }
 }
+$('#cfgEmail').onchange=()=>{ setCfg({...getCfg(), email:$('#cfgEmail').value.trim()}); toast('Email guardado.'); };
 $('#cfgSave').onclick=()=>{
-  setCfg({...getCfg(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked});
+  setCfg({...getCfg(), model:$('#cfgModel').value.trim(), iva:parseNum($('#cfgIva').value), modo:$('#cfgModo').value, crop:$('#cfgCrop').checked, email:$('#cfgEmail').value.trim()});
   toast('Definições guardadas.');
 };
 $('#btnLogout').onclick=async()=>{ if (!confirm('Terminar sessão?')) return; await flushSave(); await sb.auth.signOut(); };
 
+/* ---------- bloqueio da app: PIN e impressão digital ---------- */
+const b64e=buf=>btoa(String.fromCharCode(...new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer)));
+const b64d=str=>Uint8Array.from(atob(str), c=>c.charCodeAt(0));
+async function pinHash(pin, salt){
+  const k=await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  return b64e(await crypto.subtle.deriveBits({name:'PBKDF2', salt:b64d(salt), iterations:150000, hash:'SHA-256'}, k, 256));
+}
+function getLock(){ try{ const l=JSON.parse(localStorage.getItem('lock')||'null'); return l && me && l.user===me.id ? l : null; }catch{ return null; } }
+function setLock(l){ if (l) localStorage.setItem('lock', JSON.stringify(l)); else localStorage.removeItem('lock'); }
+let locked=false, lockFails=0, pinBuf='', lockMode=null, pinFirst='', hiddenAt=null, fileClickAt=0;
+const KEYS=['1','2','3','4','5','6','7','8','9','⌫','0','✓'];
+$('#keypad').append(...KEYS.map(k=>h('button',{type:'button','data-k':k,onclick:()=>pinKey(k)},k)));
+function renderPin(){
+  const l=getLock(), n = lockMode==='unlock' && l ? l.len : Math.max(4, pinBuf.length);
+  $('#pinDots').replaceChildren(...Array.from({length:n},(_,i)=>h('span',{class:i<pinBuf.length?'on':null})));
+  $('#keypad [data-k="✓"]').style.visibility = lockMode==='unlock' ? 'hidden' : 'visible';
+}
+function lockUI(title, {bio=false, forgot=false, cancel=false}={}){
+  $('#lockTitle').textContent=title; $('#lockErr').textContent='';
+  $('#lockBio').hidden=!bio; $('#lockForgot').hidden=!forgot; $('#lockCancel').hidden=!cancel;
+  pinBuf=''; renderPin(); $('#lock').hidden=false;
+}
+function showLock(){
+  const l=getLock(); if (!l || locked) return;
+  locked=true; lockMode='unlock';
+  lockUI('Introduz o PIN', {bio:!!l.cred, forgot:true});
+  if (l.cred) setTimeout(bioUnlock, 350);
+}
+function hideLock(){ locked=false; lockMode=null; $('#lock').hidden=true; }
+async function pinKey(k){
+  if (k==='⌫'){ pinBuf=pinBuf.slice(0,-1); renderPin(); return; }
+  if (k==='✓') return pinSubmit();
+  if (pinBuf.length>=6) return;
+  pinBuf+=k; renderPin();
+  const l=getLock();
+  if (lockMode==='unlock' && l && pinBuf.length===l.len) pinSubmit();
+}
+async function pinSubmit(){
+  const l=getLock();
+  if (lockMode==='unlock'){
+    if (await pinHash(pinBuf, l.salt)===l.hash){ lockFails=0; hideLock(); return; }
+    lockFails++; pinBuf=''; renderPin();
+    if (lockFails>=5){ $('#lockErr').textContent='Demasiadas tentativas.'; return forgotPin(true); }
+    $('#lockErr').textContent=`PIN errado. ${5-lockFails} tentativa(s) antes de teres de entrar com a password.`;
+    return;
+  }
+  if (lockMode==='set1'){
+    if (pinBuf.length<4){ $('#lockErr').textContent='O PIN tem de ter 4 a 6 algarismos.'; return; }
+    pinFirst=pinBuf; lockMode='set2'; lockUI('Repete o PIN', {cancel:true}); return;
+  }
+  if (lockMode==='set2'){
+    if (pinBuf!==pinFirst){ lockMode='set1'; lockUI('Escolhe um PIN (4 a 6 algarismos)', {cancel:true}); $('#lockErr').textContent='Os PIN não coincidem. Tenta outra vez.'; return; }
+    const old=getLock(), salt=b64e(crypto.getRandomValues(new Uint8Array(16)));
+    setLock({user:me.id, salt, hash:await pinHash(pinBuf, salt), len:pinBuf.length, cred:old?.cred||null, min:old?.min??5});
+    hideLock(); toast('PIN definido. A app passa a pedir o PIN.'); fillSettings();
+  }
+}
+function startSetPin(){ lockMode='set1'; locked=false; lockUI('Escolhe um PIN (4 a 6 algarismos)', {cancel:true}); }
+async function forgotPin(force){
+  if (!force && !confirm('Para recuperar o acesso tens de entrar outra vez com o email e a password.\n\nTerminar sessão e desligar o PIN neste telemóvel?')) return;
+  setLock(null); hideLock(); toast('Entra com o email e a password.');
+  await sb.auth.signOut();
+}
+async function bioAvailable(){
+  try{ return !!window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }catch{ return false; }
+}
+async function enableBio(){
+  const l=getLock(); if (!l) return toast('Define primeiro um PIN.');
+  if (!(await bioAvailable())) return toast('Este telemóvel não tem impressão digital ou rosto disponível para a app.');
+  try{
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge:crypto.getRandomValues(new Uint8Array(32)),
+      rp:{name:'Orçamentos Auto', id:location.hostname},
+      user:{id:new TextEncoder().encode(me.id), name:me.email||'utilizador', displayName:me.nome||me.email||'Utilizador'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform', userVerification:'required', residentKey:'discouraged'},
+      timeout:60000, attestation:'none'}});
+    l.cred=b64e(cred.rawId); setLock(l); toast('Impressão digital ativada.'); fillSettings();
+  }catch(e){ if (e.name!=='NotAllowedError') toast('Não foi possível ativar: '+errMsg(e)); }
+}
+async function bioUnlock(){
+  const l=getLock(); if (!l?.cred || !locked) return;
+  try{
+    await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)), rpId:location.hostname,
+      allowCredentials:[{type:'public-key', id:b64d(l.cred), transports:['internal','hybrid']}], userVerification:'required', timeout:60000}});
+    lockFails=0; hideLock();
+  }catch(e){ /* cancelado ou falhou: fica o PIN */ }
+}
+$('#lockBio').onclick=bioUnlock;
+$('#lockForgot').onclick=()=>forgotPin(false);
+$('#lockCancel').onclick=()=>{ hideLock(); fillSettings(); };
+// abrir a câmara/galeria esconde a app por instantes: não conta para o bloqueio
+document.addEventListener('click',e=>{ if (e.target.closest('label') && e.target.closest('label').querySelector('input[type=file]')) fileClickAt=Date.now(); },true);
+document.addEventListener('visibilitychange',()=>{
+  if (document.hidden){ hiddenAt = Date.now()-fileClickAt<4000 ? null : Date.now(); return; }
+  const l=getLock();
+  if (l && me && !locked && lockMode===null && hiddenAt && Date.now()-hiddenAt >= (l.min||0)*60000) showLock();
+  hiddenAt=null;
+});
+async function renderLockSettings(){
+  const l=getLock(), box=$('#lockBox'); box.replaceChildren();
+  if (!l){
+    box.append(h('p',{class:'muted',style:'margin-top:0'},'Desligado. Define um PIN para a app pedir PIN (e, se quiseres, impressão digital) ao abrir.'),
+      h('button',{class:'primary',style:'width:100%',onclick:startSetPin},'🔢 Definir PIN'));
+    return;
+  }
+  const sel=h('select',{}, ...[[0,'Imediatamente'],[1,'1 minuto'],[5,'5 minutos'],[15,'15 minutos'],[30,'30 minutos']].map(([v,t])=>h('option',{value:v},t)));
+  sel.value=String(l.min??5); sel.onchange=()=>{ const x=getLock(); x.min=+sel.value; setLock(x); toast('Guardado.'); };
+  const bioOk=await bioAvailable();
+  box.append(
+    h('p',{style:'margin-top:0'}, '✅ Ligado com PIN', l.cred?' e impressão digital':'', '.'),
+    h('label',{class:'fld'}, h('span',{},'Pedir outra vez depois de sair da app há'), sel),
+    h('div',{class:'row'},
+      h('button',{onclick:startSetPin},'🔢 Mudar PIN'),
+      l.cred ? h('button',{onclick:()=>{ const x=getLock(); x.cred=null; setLock(x); toast('Impressão digital desligada.'); fillSettings(); }},'Desligar digital')
+             : h('button',{onclick:enableBio, disabled:!bioOk||null, title:bioOk?null:'Não disponível neste dispositivo'},'👆 Impressão digital')),
+    h('button',{class:'danger',style:'width:100%;margin-top:8px',onclick:()=>{ if (confirm('Desligar o bloqueio neste telemóvel?')){ setLock(null); fillSettings(); toast('Bloqueio desligado.'); } }},'Desligar bloqueio'));
+}
+
 /* ---------- arranque ---------- */
 $('#appVer').textContent=APP_VERSION;
 function showLogin(){
-  me=null; docsCache=null; cur=null; selecting=false;
+  me=null; docsCache=null; cur=null; selecting=false; hideLock();
   history.replaceState({v:'vLogin'},'','#entrar');
   show('vLogin'); $('#nav').hidden=true; $('#fab').hidden=true;
 }
@@ -1413,6 +1761,7 @@ async function boot(session){
   try{
     await loadPerfis();
     me=perfisMap[session.user.id] || {id:session.user.id, email:session.user.email, nome:session.user.email, papel:'utilizador'};
+    showLock();
     await Promise.all([loadCars(), allDocs(true)]);
   }catch(e){ toast('Erro a ligar à cloud: '+errMsg(e)); }
   busy(false);
