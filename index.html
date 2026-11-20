@@ -325,10 +325,12 @@ function busy(on, msg, ctl){
   busyCtl=on ? (ctl||null) : null;
   $('#busyCancel').hidden=!busyCtl;
   if (!on) return;
-  const t0=Date.now(), base=msg||'';
-  $('#busyMsg').textContent=base;
-  busy._t=setInterval(()=>{ $('#busyMsg').textContent=`${base} ${Math.round((Date.now()-t0)/1000)} s`; },1000);
+  const t0=Date.now(); busy._base=msg||'';
+  $('#busyMsg').textContent=busy._base;
+  busy._t=setInterval(()=>{ $('#busyMsg').textContent=`${busy._base} ${Math.round((Date.now()-t0)/1000)} s`; },1000);
 }
+/* Muda só o texto do ecrã de espera, sem reiniciar o contador. */
+function busyMsg(msg){ if ($('#busy').hidden) return; busy._base=msg; $('#busyMsg').textContent=msg; }
 $('#busyCancel').onclick=()=>{ if (busyCtl) busyCtl.abort(); };
 
 /* ---------- preferências locais ---------- */
@@ -462,6 +464,12 @@ propertyOrdering:['oficina','nipc','morada','cliente','texto_marca_modelo','marc
 const TEXT_FIELDS=['oficina','nipc','morada','cliente','marca','modelo','matricula','kms','data','assinatura','observacoes','notas_leitura'];
 const NUM_FIELDS=['mo_horas','mo_preco_hora','mo_total','material_escrito','total_escrito'];
 
+/* Pausa que pode ser cancelada pelo botão "Cancelar". */
+const sleep=(ms,signal)=>new Promise((ok,ko)=>{
+  if (signal&&signal.aborted) return ko(new DOMException('Cancelado','AbortError'));
+  const t=setTimeout(ok,ms);
+  if (signal) signal.addEventListener('abort',()=>{ clearTimeout(t); ko(new DOMException('Cancelado','AbortError')); },{once:true});
+});
 /* Uma leitura com um nível de raciocínio ('minimal' | 'low' | 'medium' | 'high'). */
 const BUDGET={minimal:0, low:1024, medium:4096, high:8192};
 async function readSheet(blob, level, signal){
@@ -472,25 +480,54 @@ async function readSheet(blob, level, signal){
   const b64=(await blobToDataURL(blob)).split(',')[1];
   // Gemini 3.x usa thinkingLevel; os 2.5 usam thinkingBudget. Tenta do mais adequado para o mais compatível.
   const modes=[{thinkingLevel:level},{thinkingBudget:BUDGET[level]},null];
-  const call=async(tc)=>{
+  const call=async(mdl,tc)=>{
     const gc={temperature:0,responseMimeType:'application/json',responseSchema:SCHEMA};
     if (tc) gc.thinkingConfig=tc;
-    const r=await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{
-      method:'POST', signal,
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY},
-      body:JSON.stringify({model, body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
-    });
+    let r;
+    try{
+      r=await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{
+        method:'POST', signal,
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SB_KEY},
+        body:JSON.stringify({model:mdl, body:{contents:[{role:'user',parts:[{text:PROMPT},{inline_data:{mime_type:'image/jpeg',data:b64}}]}],generationConfig:gc}})
+      });
+    }catch(e){
+      if (e.name==='AbortError') throw e;
+      return {r:{ok:false,status:0,statusText:'Sem ligação'}, j:{error:{message:'Sem ligação à internet ou ao servidor.'}}};
+    }
     return {r, j: await r.json().catch(()=>({}))};
   };
+  // Uma leitura com um modelo: trata a compatibilidade do "raciocínio".
+  const tryModel=async(mdl)=>{
+    let r,j,used=null;
+    for (const tc of modes){
+      ({r,j}=await call(mdl,tc)); used=tc;
+      if (r.ok || r.status!==400 || !/think/i.test((j.error&&j.error.message)||'')) break;
+    }
+    return {r,j,used};
+  };
+  // Erros passageiros do lado do Google/rede: vale a pena tentar outra vez.
+  const transient=st=>st===0||st===429||st===500||st===502||st===503||st===504;
+  const fallback=/lite/i.test(model) ? 'gemini-flash-latest' : 'gemini-flash-lite-latest';
+  const plan=[{mdl:model,wait:0},{mdl:model,wait:2},{mdl:model,wait:5},{mdl:fallback,wait:2},{mdl:fallback,wait:10}];
+  const baseMsg=busy._base||'A ler a folha com o Gemini…';
   const t0=Date.now();
-  let r,j,used=null;
-  for (const tc of modes){
-    ({r,j}=await call(tc)); used=tc;
-    if (r.ok || r.status!==400 || !/think/i.test((j.error&&j.error.message)||'')) break;
+  let r,j,used=null,mdlUsed=model;
+  for (let k=0;k<plan.length;k++){
+    const {mdl,wait}=plan[k];
+    if (k>0){
+      const reserva = mdl!==model ? ' com o modelo de reserva' : '';
+      busyMsg(`Gemini ocupado — a tentar de novo${reserva} (${k+1}/${plan.length})…`);
+      await sleep(wait*1000, signal);
+    }
+    ({r,j,used}=await tryModel(mdl)); mdlUsed=mdl;
+    if (r.ok || !transient(r.status)) break;
   }
+  busyMsg(baseMsg);
   if (!r.ok){
     const m=(j.error&&j.error.message)||r.statusText;
-    if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco.\n'+m);
+    if (r.status===0) throw new Error('Sem ligação à internet. Verifica a rede e toca em 📖 Ler novamente.');
+    if (r.status===429) throw new Error('Limite gratuito do Gemini atingido. Tenta outra vez daqui a pouco (📖 Ler novamente).\n'+m);
+    if (r.status>=500) throw new Error('O Gemini está sobrecarregado neste momento (problema do lado do Google, não da app). Já tentei 5 vezes, incluindo com o modelo de reserva. Espera uns minutos e toca em 📖 Ler novamente.');
     if (r.status===401) throw new Error('A sessão terminou. Entra outra vez na app.');
     if (r.status===404) throw new Error('A função de leitura não foi encontrada no Supabase.');
     if (r.status===400||r.status===403) throw new Error('O Gemini recusou o pedido (chave no servidor ou modelo).\n'+m);
@@ -500,7 +537,7 @@ async function readSheet(blob, level, signal){
   const txt=c&&c.content&&c.content.parts ? c.content.parts.filter(p=>!p.thought).map(p=>p.text||'').join('') : '';
   if (!txt) throw new Error('O Gemini não devolveu dados ('+((c&&c.finishReason)||(j.promptFeedback&&j.promptFeedback.blockReason)||'sem resposta')+').');
   const u=j.usageMetadata||{};
-  return {data:JSON.parse(txt), diag:{segundos:Math.round((Date.now()-t0)/100)/10, modelo:j.modelVersion||model,
+  return {data:JSON.parse(txt), diag:{segundos:Math.round((Date.now()-t0)/100)/10, modelo:(j.modelVersion||mdlUsed)+(mdlUsed!==model?' (reserva)':''),
     raciocinio: used ? Object.values(used)[0]+'' : 'por defeito', tokensRaciocinio:u.thoughtsTokenCount||0}};
 }
 
@@ -806,7 +843,8 @@ const fold=(title,...kids)=>h('details',{class:'card fold'}, h('summary',{},titl
 
 function renderEdit(){
   const v=$('#vEdit'); v.replaceChildren();
-  if (cur.erro) v.append(h('div',{class:'alert err'}, '⚠️ '+cur.erro));
+  if (cur.erro) v.append(h('div',{class:'alert err'}, '⚠️ '+cur.erro,
+    cur.fotos.length ? h('div',{class:'row',style:'margin-top:8px'}, h('button',{class:'btn primary',onclick:()=>readPhoto(0)},'📖 Ler novamente')) : null));
   v.append(h('div',{id:'dupBox'}));
   if (cur.notas_leitura) v.append(h('div',{class:'alert info'}, '🔎 '+cur.notas_leitura));
   if (cur.viaturaDaMemoria) v.append(h('div',{class:'alert info'}, '🚗 Marca e modelo preenchidos a partir de leituras anteriores desta matrícula.'));
@@ -945,7 +983,10 @@ async function readPhoto(i){
   const ctl=new AbortController();
   busy(true,'A ler a folha com o Gemini…',ctl);
   try{ Object.assign(cur, await readSmart(await fotoBlob(cur.fotos[i]), ctl.signal), {erro:null}); await dbPut(cur); renderEdit(); show('vEdit'); toast('Folha lida.'); }
-  catch(e){ toast(e.name==='AbortError' ? 'Leitura cancelada.' : (e.message||String(e))); }
+  catch(e){
+    if (e.name==='AbortError') toast('Leitura cancelada.');
+    else { cur.erro=e.message||String(e); try{ await dbPut(cur); }catch{} renderEdit(); show('vEdit'); }
+  }
   finally{ busy(false); }
 }
 
