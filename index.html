@@ -317,7 +317,7 @@
 
 <script>
 'use strict';
-const APP_VERSION='3.1';
+const APP_VERSION='3.1.1';
 /* ---------- ligação ao Supabase (valores públicos; a segurança está nas regras da base de dados) ---------- */
 const SB_URL='https://omolyswdppccrxsdcpgb.supabase.co';
 const SB_KEY='sb_publishable_j8Yh8fq3r5pgtYWMdeh16Q_1QnIGWvP';
@@ -1445,33 +1445,59 @@ async function exportXlsx(docs, name, desc){
   catch(e){ busy(false); toast(errMsg(e)); }
 }
 
-/* ---------- enviar por email (partilha do telemóvel) ---------- */
+/* ---------- enviar por email (partilha do telemóvel) ----------
+   O Android não deixa partilhar ficheiros Excel diretamente. Por isso o Excel
+   fica guardado na cloud (pasta "exportacoes") e partilha-se um link de download. */
 let pendingShare=null;
+function resetShareBtn(btn){ if (btn && btn.dataset.label){ btn.textContent=btn.dataset.label; } }
+function armShareBtn(btn){ if (btn){ btn.dataset.label=btn.dataset.label||btn.textContent; btn.textContent='📧 Toca para partilhar'; } }
+async function shareText(p, btn){
+  if (navigator.share){
+    try{ await navigator.share({title:p.subject, text:p.body}); pendingShare=null; resetShareBtn(btn); return; }
+    catch(e){
+      if (e.name==='AbortError'){ pendingShare=null; resetShareBtn(btn); return; }
+      if (e.name==='NotAllowedError'){ pendingShare=p; armShareBtn(btn); return toast('Excel pronto. Toca outra vez para escolher o email.'); }
+    }
+  }
+  const to=getCfg().email||'';
+  const a=h('a',{href:`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(p.subject)}&body=${encodeURIComponent(p.body)}`});
+  document.body.append(a); a.click(); a.remove(); pendingShare=null; resetShareBtn(btn);
+}
+async function cleanOldExports(){
+  try{
+    const {data}=await sb.storage.from('fotos').list('exportacoes',{limit:200});
+    const old=(data||[]).filter(f=>f.created_at && Date.now()-Date.parse(f.created_at)>15*864e5).map(f=>'exportacoes/'+f.name);
+    if (old.length) await sb.storage.from('fotos').remove(old);
+  }catch(e){}
+}
 async function shareXlsx(docs, name, desc={}, btn){
+  if (pendingShare && pendingShare.name===name) return shareText(pendingShare, btn);
   if (!docs.length) return toast('Não há orçamentos para enviar.');
   const periodo=desc.periodo||'orçamentos';
   const subject=`Orçamentos Auto — ${periodo}`;
-  const text=`Segue em anexo o Excel dos orçamentos (${periodo}): ${docs.length} orçamento(s), total ${money(agg(docs).total)} com IVA.`;
-  let file;
-  if (pendingShare && pendingShare.name===name) file=pendingShare.file;
-  else {
-    await flushSave(); busy(true,'A preparar o Excel…');
-    try{ file=new File([await buildXlsx(docs, desc)], name, {type:XLSX_MIME}); }catch(e){ busy(false); return toast(errMsg(e)); }
-    busy(false);
-  }
-  if (navigator.canShare && navigator.canShare({files:[file]})){
-    try{ await navigator.share({files:[file], title:subject, text}); pendingShare=null; if (btn) btn.textContent=btn.dataset.label; return; }
-    catch(e){
-      if (e.name==='AbortError'){ pendingShare=null; return; }
-      if (e.name==='NotAllowedError'){ // o Excel demorou a preparar: falta um toque para abrir a partilha
-        pendingShare={name,file}; if (btn){ btn.dataset.label=btn.dataset.label||btn.textContent; btn.textContent='📧 Toca para partilhar'; }
-        return toast('Excel pronto. Toca outra vez em "Partilhar" para escolher o email.');
-      }
+  const text=`Segue o Excel dos orçamentos (${periodo}): ${docs.length} orçamento(s), total ${money(agg(docs).total)} com IVA.`;
+  await flushSave(); busy(true,'A preparar o Excel…');
+  try{
+    const blob=await buildXlsx(docs, desc);
+    const file=new File([blob], name, {type:XLSX_MIME});
+    // 1) onde for possível (ex.: alguns PCs), partilha o próprio ficheiro
+    if (navigator.canShare && navigator.canShare({files:[file]})){
+      busy(false);
+      try{ await navigator.share({files:[file], title:subject, text}); resetShareBtn(btn); return; }
+      catch(e){ if (e.name==='AbortError') return; }
+      busy(true,'A preparar o link…');
     }
-  }
-  deliver(name, file);
-  const to=getCfg().email||'';
-  location.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text+'\n\n(Anexa o ficheiro '+name+', que foi transferido para o telemóvel.)')}`;
+    // 2) guarda na cloud e partilha um link de download
+    busyMsg('A guardar o Excel na cloud…');
+    const path=`exportacoes/${todayISO()}-${uid().slice(0,8)}-${name}`;
+    const up=await sb.storage.from('fotos').upload(path, blob, {contentType:XLSX_MIME});
+    if (up.error) throw up.error;
+    const sig=await sb.storage.from('fotos').createSignedUrl(path, 14*24*3600, {download:name});
+    if (sig.error) throw sig.error;
+    cleanOldExports();
+    busy(false);
+    await shareText({name, subject, body:`${text}\n\nDescarregar o Excel (link válido durante 14 dias):\n${sig.data.signedUrl}`}, btn);
+  }catch(e){ busy(false); toast('Não consegui preparar o envio: '+errMsg(e)); }
 }
 
 /* ---------- painel de exportação com filtros ---------- */
@@ -1499,7 +1525,7 @@ async function exFiltered(){
 async function exCount(){
   const {list}=await exFiltered();
   $('#exCount').textContent = list.length ? `${list.length} orçamento(s) · ${money(agg(list).total)} com IVA` : 'Nenhum orçamento com estes filtros.';
-  pendingShare=null; const b=$('#exMail'); if (b.dataset.label) b.textContent=b.dataset.label;
+  pendingShare=null; resetShareBtn($('#exMail'));
 }
 async function openExport(preset={}){
   const docs=await allDocs();
